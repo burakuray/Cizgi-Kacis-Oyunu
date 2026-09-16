@@ -94,6 +94,8 @@ export default function GameScreen() {
   const course = useMemo(() => makeCourse(level, board.width, board.height), [level, board.height, board.width]);
   const origin = useMemo(() => ({ x: board.width / 2, y: board.height - 57 }), [board.width, board.height]);
   const goal = useMemo(() => ({ x: board.width / 2, y: 51 }), [board.width]);
+  const [launchPoint, setLaunchPoint] = useState<Point>(origin);
+  const launchPointRef = useRef(launchPoint);
 
   useEffect(() => {
     stoneRef.current = stone;
@@ -108,6 +110,10 @@ export default function GameScreen() {
   }, [phase]);
 
   useEffect(() => {
+    launchPointRef.current = launchPoint;
+  }, [launchPoint]);
+
+  useEffect(() => {
     AsyncStorage.getItem(BEST_LEVEL_KEY).then((stored) => {
       if (stored) setBestLevel(Math.max(1, Number(stored)));
     });
@@ -116,8 +122,10 @@ export default function GameScreen() {
   const resetStone = useCallback(() => {
     stoneRef.current = origin;
     velocityRef.current = { x: 0, y: 0 };
+    launchPointRef.current = origin;
     setStone(origin);
     setVelocity({ x: 0, y: 0 });
+    setLaunchPoint(origin);
     setAim({ x: origin.x, y: origin.y - 75 });
   }, [origin]);
 
@@ -155,6 +163,11 @@ export default function GameScreen() {
         x: current.x + velocityRef.current.x * delta,
         y: current.y + velocityRef.current.y * delta,
       };
+      const friction = Math.pow(0.992, delta);
+      let nextVelocity = {
+        x: velocityRef.current.x * friction,
+        y: velocityRef.current.y * friction,
+      };
       const hitHorizontalEdge = rawNext.x < STONE_RADIUS || rawNext.x > board.width - STONE_RADIUS;
       const hitVerticalEdge = rawNext.y < STONE_RADIUS || rawNext.y > board.height - STONE_RADIUS;
       const next = {
@@ -162,13 +175,12 @@ export default function GameScreen() {
         y: clamp(rawNext.y, STONE_RADIUS, board.height - STONE_RADIUS),
       };
       if (hitHorizontalEdge) {
-        velocityRef.current = { ...velocityRef.current, x: -velocityRef.current.x };
-        setVelocity(velocityRef.current);
+        nextVelocity = { ...nextVelocity, x: -nextVelocity.x };
       }
       if (hitVerticalEdge) {
-        velocityRef.current = { ...velocityRef.current, y: -velocityRef.current.y };
-        setVelocity(velocityRef.current);
+        nextVelocity = { ...nextVelocity, y: -nextVelocity.y };
       }
+      velocityRef.current = nextVelocity;
       const collided = course.some((line) => distanceToSegment(next, line) < STONE_RADIUS + 3);
       const reachedGoal = Math.hypot(next.x - goal.x, next.y - goal.y) < 26;
 
@@ -182,6 +194,17 @@ export default function GameScreen() {
       }
       stoneRef.current = next;
       setStone(next);
+      if (Math.hypot(nextVelocity.x, nextVelocity.y) < 0.08) {
+        const restingAim = { x: next.x, y: next.y - 75 };
+        velocityRef.current = { x: 0, y: 0 };
+        launchPointRef.current = next;
+        aimRef.current = restingAim;
+        setVelocity({ x: 0, y: 0 });
+        setLaunchPoint(next);
+        setAim(restingAim);
+        setGamePhase('aiming');
+        return;
+      }
       frameRef.current = requestAnimationFrame(tick);
     };
     frameRef.current = requestAnimationFrame(tick);
@@ -200,8 +223,9 @@ export default function GameScreen() {
 
   const launch = useCallback(async () => {
     if (phaseRef.current !== 'aiming') return;
-    const dx = aimRef.current.x - origin.x;
-    const dy = aimRef.current.y - origin.y;
+    const start = launchPointRef.current;
+    const dx = aimRef.current.x - start.x;
+    const dy = aimRef.current.y - start.y;
     const length = Math.hypot(dx, dy);
     if (length < MIN_DRAG) return;
     const strength = clamp(length / MAX_DRAG, 0.25, 1);
@@ -212,19 +236,20 @@ export default function GameScreen() {
     setGamePhase('moving');
     setShowHelp(false);
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-  }, [origin, setGamePhase]);
+  }, [setGamePhase]);
 
   const updateAim = useCallback((x: number, y: number) => {
-    const dx = x - origin.x;
-    const dy = y - origin.y;
+    const start = launchPointRef.current;
+    const dx = x - start.x;
+    const dy = y - start.y;
     const length = Math.hypot(dx, dy);
     const limited = Math.min(length, MAX_DRAG);
     const next = length === 0
-      ? origin
-      : { x: origin.x + (dx / length) * limited, y: origin.y + (dy / length) * limited };
+      ? start
+      : { x: start.x + (dx / length) * limited, y: start.y + (dy / length) * limited };
     aimRef.current = next;
     setAim(next);
-  }, [origin]);
+  }, []);
 
   const responder = useMemo(() => PanResponder.create({
     onStartShouldSetPanResponder: () => phaseRef.current === 'aiming',
@@ -260,7 +285,7 @@ export default function GameScreen() {
     setGamePhase('aiming');
   }, [resetStone, setGamePhase]);
 
-  const progress = clamp(Math.hypot(aim.x - origin.x, aim.y - origin.y) / MAX_DRAG, 0, 1);
+  const progress = clamp(Math.hypot(aim.x - launchPoint.x, aim.y - launchPoint.y) / MAX_DRAG, 0, 1);
   const boardInsetTop = Math.max(18, insets.top * 0.18);
 
   return (
@@ -297,7 +322,10 @@ export default function GameScreen() {
             const nextOrigin = { x: width / 2, y: height - 57 };
             setStone(nextOrigin);
             stoneRef.current = nextOrigin;
+            setLaunchPoint(nextOrigin);
+            launchPointRef.current = nextOrigin;
             setAim({ x: nextOrigin.x, y: nextOrigin.y - 75 });
+            aimRef.current = { x: nextOrigin.x, y: nextOrigin.y - 75 };
           }
         }}
         {...responder.panHandlers}
