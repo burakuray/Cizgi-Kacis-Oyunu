@@ -252,11 +252,18 @@ export default function GameScreen() {
   }, []);
 
   const responder = useMemo(() => PanResponder.create({
-    onStartShouldSetPanResponder: () => phaseRef.current === 'aiming',
-    onMoveShouldSetPanResponder: () => phaseRef.current === 'aiming',
+    onStartShouldSetPanResponder: (event) => {
+      if (phaseRef.current !== 'aiming') return false;
+      const start = launchPointRef.current;
+      return Math.hypot(
+        event.nativeEvent.locationX - start.x,
+        event.nativeEvent.locationY - start.y,
+      ) < 42;
+    },
+    onMoveShouldSetPanResponder: () => false,
     onPanResponderGrant: (event) => {
       if (phaseRef.current === 'aiming') {
-        updateAim(event.nativeEvent.locationX, event.nativeEvent.locationY);
+        updateAim(launchPointRef.current.x, launchPointRef.current.y);
       }
     },
     onPanResponderMove: (event) => {
@@ -369,10 +376,10 @@ export default function GameScreen() {
                 styles.aimGuide,
                 {
                   backgroundColor: colors.stoneHighlight,
-                  width: Math.max(1, Math.hypot(aim.x - origin.x, aim.y - origin.y)),
-                  left: origin.x,
-                  top: origin.y - 1,
-                  transform: [{ rotate: `${Math.atan2(aim.y - origin.y, aim.x - origin.x)}rad` }],
+                  width: Math.max(1, Math.hypot(aim.x - launchPoint.x, aim.y - launchPoint.y)),
+                  left: launchPoint.x,
+                  top: launchPoint.y - 1,
+                  transform: [{ rotate: `${Math.atan2(aim.y - launchPoint.y, aim.x - launchPoint.x)}rad` }],
                   opacity: 0.36 + progress * 0.5,
                 },
               ]}
