@@ -151,16 +151,28 @@ export default function GameScreen() {
       const delta = Math.min(34, now - previous) / 16.67;
       previous = now;
       const current = stoneRef.current;
-      const next = {
+      const rawNext = {
         x: current.x + velocityRef.current.x * delta,
         y: current.y + velocityRef.current.y * delta,
       };
-      const outside = next.x < STONE_RADIUS || next.x > board.width - STONE_RADIUS ||
-        next.y < STONE_RADIUS || next.y > board.height - STONE_RADIUS;
+      const hitHorizontalEdge = rawNext.x < STONE_RADIUS || rawNext.x > board.width - STONE_RADIUS;
+      const hitVerticalEdge = rawNext.y < STONE_RADIUS || rawNext.y > board.height - STONE_RADIUS;
+      const next = {
+        x: clamp(rawNext.x, STONE_RADIUS, board.width - STONE_RADIUS),
+        y: clamp(rawNext.y, STONE_RADIUS, board.height - STONE_RADIUS),
+      };
+      if (hitHorizontalEdge) {
+        velocityRef.current = { ...velocityRef.current, x: -velocityRef.current.x };
+        setVelocity(velocityRef.current);
+      }
+      if (hitVerticalEdge) {
+        velocityRef.current = { ...velocityRef.current, y: -velocityRef.current.y };
+        setVelocity(velocityRef.current);
+      }
       const collided = course.some((line) => distanceToSegment(next, line) < STONE_RADIUS + 3);
       const reachedGoal = Math.hypot(next.x - goal.x, next.y - goal.y) < 26;
 
-      if (outside || collided) {
+      if (collided) {
         finishAttempt(false);
         return;
       }
