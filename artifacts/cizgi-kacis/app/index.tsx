@@ -22,6 +22,8 @@ const BEST_LEVEL_KEY = '@cizgi-kacis/best-level';
 const STONE_RADIUS = 13;
 const MAX_DRAG = 94;
 const MIN_DRAG = 16;
+const AIM_PAD_SIZE = 96;
+const AIM_PAD_RADIUS = 38;
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
@@ -81,6 +83,7 @@ export default function GameScreen() {
   const [phase, setPhase] = useState<Phase>('aiming');
   const [stone, setStone] = useState<Point>({ x: board.width / 2, y: board.height - 57 });
   const [aim, setAim] = useState<Point>({ x: board.width / 2, y: board.height - 132 });
+  const [joystick, setJoystick] = useState<Point>({ x: 0, y: 0 });
   const [velocity, setVelocity] = useState<Point>({ x: 0, y: 0 });
   const [showHelp, setShowHelp] = useState(true);
   const [flash, setFlash] = useState(false);
@@ -88,6 +91,7 @@ export default function GameScreen() {
   const velocityRef = useRef(velocity);
   const phaseRef = useRef(phase);
   const aimRef = useRef(aim);
+  const joystickRef = useRef(joystick);
   const frameRef = useRef<number | null>(null);
   const pulse = useRef(new Animated.Value(1)).current;
 
@@ -126,6 +130,8 @@ export default function GameScreen() {
     setStone(origin);
     setVelocity({ x: 0, y: 0 });
     setLaunchPoint(origin);
+    joystickRef.current = { x: 0, y: 0 };
+    setJoystick({ x: 0, y: 0 });
     setAim({ x: origin.x, y: origin.y - 75 });
   }, [origin]);
 
@@ -235,45 +241,47 @@ export default function GameScreen() {
     setVelocity(nextVelocity);
     setGamePhase('moving');
     setShowHelp(false);
+    joystickRef.current = { x: 0, y: 0 };
+    setJoystick({ x: 0, y: 0 });
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
   }, [setGamePhase]);
 
-  const updateAim = useCallback((x: number, y: number) => {
+  const updateJoystick = useCallback((x: number, y: number) => {
+    const center = AIM_PAD_SIZE / 2;
+    const dx = x - center;
+    const dy = y - center;
+    const distance = Math.hypot(dx, dy);
+    const limited = Math.min(distance, AIM_PAD_RADIUS);
+    const offset = distance === 0
+      ? { x: 0, y: 0 }
+      : { x: (dx / distance) * limited, y: (dy / distance) * limited };
     const start = launchPointRef.current;
-    const dx = x - start.x;
-    const dy = y - start.y;
-    const length = Math.hypot(dx, dy);
-    const limited = Math.min(length, MAX_DRAG);
-    const next = length === 0
+    const aimDistance = MAX_DRAG * (limited / AIM_PAD_RADIUS);
+    const next = distance === 0
       ? start
-      : { x: start.x + (dx / length) * limited, y: start.y + (dy / length) * limited };
+      : { x: start.x + (dx / distance) * aimDistance, y: start.y + (dy / distance) * aimDistance };
+    joystickRef.current = offset;
     aimRef.current = next;
+    setJoystick(offset);
     setAim(next);
   }, []);
 
   const responder = useMemo(() => PanResponder.create({
-    onStartShouldSetPanResponder: (event) => {
-      if (phaseRef.current !== 'aiming') return false;
-      const start = launchPointRef.current;
-      return Math.hypot(
-        event.nativeEvent.locationX - start.x,
-        event.nativeEvent.locationY - start.y,
-      ) < 42;
-    },
-    onMoveShouldSetPanResponder: () => false,
-    onPanResponderGrant: (event) => {
+    onStartShouldSetPanResponder: () => phaseRef.current === 'aiming',
+    onMoveShouldSetPanResponder: () => phaseRef.current === 'aiming',
+    onPanResponderGrant: () => {
       if (phaseRef.current === 'aiming') {
-        updateAim(launchPointRef.current.x, launchPointRef.current.y);
+        updateJoystick(AIM_PAD_SIZE / 2, AIM_PAD_SIZE / 2);
       }
     },
     onPanResponderMove: (event) => {
       if (phaseRef.current === 'aiming') {
-        updateAim(event.nativeEvent.locationX, event.nativeEvent.locationY);
+        updateJoystick(event.nativeEvent.locationX, event.nativeEvent.locationY);
       }
     },
     onPanResponderRelease: launch,
     onPanResponderTerminate: launch,
-  }), [launch, updateAim]);
+  }), [launch, updateJoystick]);
 
   const nextLevel = useCallback(async () => {
     const next = level + 1;
@@ -333,9 +341,10 @@ export default function GameScreen() {
             launchPointRef.current = nextOrigin;
             setAim({ x: nextOrigin.x, y: nextOrigin.y - 75 });
             aimRef.current = { x: nextOrigin.x, y: nextOrigin.y - 75 };
+            setJoystick({ x: 0, y: 0 });
+            joystickRef.current = { x: 0, y: 0 };
           }
         }}
-        {...responder.panHandlers}
       >
         {Array.from({ length: 8 }).map((_, index) => (
           <View key={`v-${index}`} style={[styles.gridVertical, { left: (board.width / 8) * (index + 1), backgroundColor: colors.gridLine }]} />
@@ -390,9 +399,30 @@ export default function GameScreen() {
             {showHelp && (
               <View style={[styles.helpBubble, { backgroundColor: colors.gameSurfaceRaised }]}>
                 <Feather name="move" size={16} color={colors.stoneHighlight} />
-                <Text style={[styles.helpText, { color: colors.ink }]}>Taşı sürükle, yön ver ve bırak</Text>
+                <Text style={[styles.helpText, { color: colors.ink }]}>Sağ üstteki pedi sürükle ve bırak</Text>
               </View>
             )}
+            <View
+              testID="aim-joystick"
+              style={[styles.aimPad, { backgroundColor: `${colors.gameSurfaceRaised}E8`, borderColor: colors.border }]}
+              {...responder.panHandlers}
+            >
+              <View style={[styles.aimPadRing, { borderColor: colors.mutedForeground }]} pointerEvents="none" />
+              <View
+                style={[
+                  styles.aimKnob,
+                  {
+                    backgroundColor: colors.stone,
+                    left: AIM_PAD_SIZE / 2 - 16 + joystick.x,
+                    top: AIM_PAD_SIZE / 2 - 16 + joystick.y,
+                  },
+                ]}
+                pointerEvents="none"
+              >
+                <Feather name="crosshair" size={15} color={colors.gameBackground} />
+              </View>
+              <Text style={[styles.aimPadLabel, { color: colors.mutedForeground }]} pointerEvents="none">YÖN</Text>
+            </View>
           </>
         )}
 
@@ -479,6 +509,10 @@ const styles = StyleSheet.create({
   stone: { width: STONE_RADIUS * 2, height: STONE_RADIUS * 2, borderRadius: STONE_RADIUS, position: 'absolute', alignItems: 'center', justifyContent: 'center', shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 7, shadowOffset: { width: 0, height: 3 }, elevation: 5 },
   stoneShine: { width: 5, height: 5, borderRadius: 3, position: 'absolute', top: 4, left: 5, opacity: 0.9 },
   aimGuide: { height: 2, position: 'absolute', transformOrigin: 'left center', borderRadius: 2 },
+  aimPad: { width: AIM_PAD_SIZE, height: AIM_PAD_SIZE, position: 'absolute', top: 18, right: 18, borderRadius: AIM_PAD_SIZE / 2, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
+  aimPadRing: { position: 'absolute', width: 72, height: 72, borderRadius: 36, borderWidth: 1, opacity: 0.45 },
+  aimKnob: { width: 32, height: 32, borderRadius: 16, position: 'absolute', alignItems: 'center', justifyContent: 'center' },
+  aimPadLabel: { position: 'absolute', bottom: 7, fontSize: 8, letterSpacing: 1.2, fontWeight: '700' },
   powerTrack: { position: 'absolute', left: 18, right: 18, bottom: 18, height: 5, borderRadius: 5, overflow: 'hidden' },
   powerFill: { height: '100%', borderRadius: 5 },
   helpBubble: { position: 'absolute', top: '47%', alignSelf: 'center', flexDirection: 'row', alignItems: 'center', gap: 8, borderRadius: 14, paddingHorizontal: 13, paddingVertical: 10 },
