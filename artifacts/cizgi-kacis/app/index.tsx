@@ -16,6 +16,15 @@ import { useColors } from '@/hooks/useColors';
 
 type Point = { x: number; y: number };
 type Segment = { x1: number; y1: number; x2: number; y2: number };
+type MovingBar = {
+  id: string;
+  segment: Segment;
+  axis: 'x' | 'y';
+  travel: number;
+  speed: number;
+  phase: number;
+};
+type PortalPair = { id: string; a: Point; b: Point; label: string };
 type Phase = 'aiming' | 'moving' | 'hit' | 'complete';
 
 const BEST_LEVEL_KEY = '@cizgi-kacis/best-level';
@@ -24,6 +33,7 @@ const MAX_DRAG = 94;
 const MIN_DRAG = 16;
 const AIM_PAD_SIZE = 96;
 const AIM_PAD_RADIUS = 38;
+const HOLE_RADIUS = 18;
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
@@ -69,6 +79,95 @@ function makeCourse(level: number, width: number, height: number): Segment[] {
   return lines;
 }
 
+function makeMovingBars(level: number, width: number, height: number): MovingBar[] {
+  if (level < 2 || level % 4 === 0) return [];
+
+  const usableTop = Math.max(94, height * 0.14);
+  const usableBottom = height - 116;
+  const middle = usableTop + (usableBottom - usableTop) * 0.52;
+  const bars: MovingBar[] = [];
+
+  if (level % 2 === 0) {
+    bars.push({
+      id: `sweep-${level}`,
+      segment: { x1: width * 0.16, y1: middle, x2: width * 0.84, y2: middle },
+      axis: 'y',
+      travel: 22 + (level % 3) * 8,
+      speed: 1.45,
+      phase: level * 0.7,
+    });
+  } else {
+    const x = width * (level % 3 === 0 ? 0.67 : 0.34);
+    bars.push({
+      id: `gate-${level}`,
+      segment: { x1: x, y1: usableTop + 62, x2: x, y2: usableBottom - 30 },
+      axis: 'x',
+      travel: 20 + (level % 4) * 5,
+      speed: 1.2,
+      phase: level * 0.55,
+    });
+  }
+
+  if (level >= 6 && level % 3 === 0) {
+    const x = width * 0.5;
+    bars.push({
+      id: `center-${level}`,
+      segment: { x1: x, y1: usableTop + 26, x2: x, y2: usableTop + 116 },
+      axis: 'x',
+      travel: 24,
+      speed: 1.8,
+      phase: level * 0.9,
+    });
+  }
+
+  return bars;
+}
+
+function positionMovingBar(bar: MovingBar, time: number): Segment {
+  const offset = Math.sin(time * bar.speed + bar.phase) * bar.travel;
+  if (bar.axis === 'x') {
+    return {
+      x1: bar.segment.x1 + offset,
+      y1: bar.segment.y1,
+      x2: bar.segment.x2 + offset,
+      y2: bar.segment.y2,
+    };
+  }
+  return {
+    x1: bar.segment.x1,
+    y1: bar.segment.y1 + offset,
+    x2: bar.segment.x2,
+    y2: bar.segment.y2 + offset,
+  };
+}
+
+function makePortals(level: number, width: number, height: number): PortalPair[] {
+  if (level < 4 || level % 4 !== 0) return [];
+
+  const usableTop = Math.max(94, height * 0.14);
+  const usableBottom = height - 116;
+  const pairCount = level >= 8 ? 2 : 1;
+  const pairs: PortalPair[] = [];
+
+  for (let index = 0; index < pairCount; index += 1) {
+    const yOffset = index * 74;
+    pairs.push({
+      id: `portal-${level}-${index}`,
+      label: String.fromCharCode(65 + index),
+      a: {
+        x: width * (index === 0 ? 0.22 : 0.78),
+        y: usableTop + 100 + yOffset,
+      },
+      b: {
+        x: width * (index === 0 ? 0.78 : 0.22),
+        y: usableBottom - 70 - yOffset,
+      },
+    });
+  }
+
+  return pairs;
+}
+
 function formatLevel(level: number) {
   return String(level).padStart(2, '0');
 }
@@ -86,6 +185,7 @@ export default function GameScreen() {
   const [joystick, setJoystick] = useState<Point>({ x: 0, y: 0 });
   const [joystickAnchor, setJoystickAnchor] = useState<Point>({ x: board.width / 2, y: board.height / 2 });
   const [joystickVisible, setJoystickVisible] = useState(false);
+  const [motionTime, setMotionTime] = useState(0);
   const [velocity, setVelocity] = useState<Point>({ x: 0, y: 0 });
   const [showHelp, setShowHelp] = useState(true);
   const [flash, setFlash] = useState(false);
@@ -95,10 +195,20 @@ export default function GameScreen() {
   const aimRef = useRef(aim);
   const joystickRef = useRef(joystick);
   const joystickAnchorRef = useRef(joystickAnchor);
+  const portalLockRef = useRef<string | null>(null);
   const frameRef = useRef<number | null>(null);
   const pulse = useRef(new Animated.Value(1)).current;
 
   const course = useMemo(() => makeCourse(level, board.width, board.height), [level, board.height, board.width]);
+  const movingBarBlueprints = useMemo(
+    () => makeMovingBars(level, board.width, board.height),
+    [level, board.height, board.width],
+  );
+  const movingBars = useMemo(
+    () => movingBarBlueprints.map((bar) => positionMovingBar(bar, motionTime)),
+    [movingBarBlueprints, motionTime],
+  );
+  const portals = useMemo(() => makePortals(level, board.width, board.height), [level, board.height, board.width]);
   const origin = useMemo(() => ({ x: board.width / 2, y: board.height - 57 }), [board.width, board.height]);
   const goal = useMemo(() => ({ x: board.width / 2, y: 51 }), [board.width]);
   const [launchPoint, setLaunchPoint] = useState<Point>(origin);
@@ -138,6 +248,8 @@ export default function GameScreen() {
     setJoystick({ x: 0, y: 0 });
     setJoystickAnchor(joystickAnchorRef.current);
     setJoystickVisible(false);
+    setMotionTime(0);
+    portalLockRef.current = null;
     setAim({ x: origin.x, y: origin.y - 75 });
   }, [board.height, board.width, origin]);
 
@@ -165,11 +277,14 @@ export default function GameScreen() {
       return;
     }
 
+    const startedAt = Date.now();
     let previous = Date.now();
     const tick = () => {
       const now = Date.now();
       const delta = Math.min(34, now - previous) / 16.67;
       previous = now;
+      const elapsed = (now - startedAt) / 1000;
+      setMotionTime(elapsed);
       const current = stoneRef.current;
       const rawNext = {
         x: current.x + velocityRef.current.x * delta,
@@ -193,7 +308,8 @@ export default function GameScreen() {
         nextVelocity = { ...nextVelocity, y: -nextVelocity.y };
       }
       velocityRef.current = nextVelocity;
-      const collided = course.some((line) => distanceToSegment(next, line) < STONE_RADIUS + 3);
+      const activeMovingBars = movingBarBlueprints.map((bar) => positionMovingBar(bar, elapsed));
+      const collided = [...course, ...activeMovingBars].some((line) => distanceToSegment(next, line) < STONE_RADIUS + 3);
       const reachedGoal = Math.hypot(next.x - goal.x, next.y - goal.y) < 26;
 
       if (collided) {
@@ -204,6 +320,30 @@ export default function GameScreen() {
         finishAttempt(true);
         return;
       }
+
+      if (portalLockRef.current) {
+        const [lockedPortalId, lockedHole] = portalLockRef.current.split(':');
+        const lockedPortal = portals.find((portal) => portal.id === lockedPortalId);
+        const lockedPoint = lockedPortal?.[lockedHole === 'a' ? 'a' : 'b'];
+        if (!lockedPoint || Math.hypot(next.x - lockedPoint.x, next.y - lockedPoint.y) > HOLE_RADIUS + STONE_RADIUS + 8) {
+          portalLockRef.current = null;
+        }
+      }
+
+      const enteredPortal = portals.find((portal) => {
+        const nearA = Math.hypot(next.x - portal.a.x, next.y - portal.a.y) < HOLE_RADIUS + STONE_RADIUS;
+        const nearB = Math.hypot(next.x - portal.b.x, next.y - portal.b.y) < HOLE_RADIUS + STONE_RADIUS;
+        return (nearA && portalLockRef.current !== `${portal.id}:a`)
+          || (nearB && portalLockRef.current !== `${portal.id}:b`);
+      });
+      if (enteredPortal) {
+        const nearA = Math.hypot(next.x - enteredPortal.a.x, next.y - enteredPortal.a.y) < HOLE_RADIUS + STONE_RADIUS;
+        next.x = nearA ? enteredPortal.b.x : enteredPortal.a.x;
+        next.y = nearA ? enteredPortal.b.y : enteredPortal.a.y;
+        portalLockRef.current = `${enteredPortal.id}:${nearA ? 'b' : 'a'}`;
+        void Haptics.selectionAsync();
+      }
+
       stoneRef.current = next;
       setStone(next);
       if (Math.hypot(nextVelocity.x, nextVelocity.y) < 0.08) {
@@ -224,7 +364,7 @@ export default function GameScreen() {
     return () => {
       if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
     };
-  }, [board.height, board.width, course, finishAttempt, goal, phase]);
+  }, [board.height, board.width, course, finishAttempt, goal, movingBarBlueprints, phase, portals]);
 
   useEffect(() => {
     if (phase !== 'complete') return;
@@ -248,6 +388,8 @@ export default function GameScreen() {
     setVelocity(nextVelocity);
     setGamePhase('moving');
     setShowHelp(false);
+    setMotionTime(0);
+    portalLockRef.current = null;
     joystickRef.current = { x: 0, y: 0 };
     setJoystick({ x: 0, y: 0 });
     setJoystickVisible(false);
@@ -403,6 +545,49 @@ export default function GameScreen() {
             />
           );
         })}
+        {movingBars.map((line, index) => {
+          const length = Math.hypot(line.x2 - line.x1, line.y2 - line.y1);
+          const angle = Math.atan2(line.y2 - line.y1, line.x2 - line.x1);
+          return (
+            <View
+              key={`moving-line-${movingBarBlueprints[index]?.id ?? index}`}
+              style={[
+                styles.obstacle,
+                styles.movingObstacle,
+                {
+                  backgroundColor: colors.obstacle,
+                  borderColor: colors.stoneHighlight,
+                  width: length,
+                  left: line.x1,
+                  top: line.y1 - 3,
+                  transform: [{ rotate: `${angle}rad` }],
+                },
+              ]}
+            />
+          );
+        })}
+
+        {portals.map((portal) => (
+          <React.Fragment key={portal.id}>
+            {[{ point: portal.a, side: 'a' }, { point: portal.b, side: 'b' }].map(({ point, side }) => (
+              <View
+                key={`${portal.id}-${side}`}
+                style={[
+                  styles.hole,
+                  {
+                    left: point.x - HOLE_RADIUS,
+                    top: point.y - HOLE_RADIUS,
+                    borderColor: colors.stoneHighlight,
+                    backgroundColor: `${colors.gameBackground}D9`,
+                  },
+                ]}
+              >
+                <View style={[styles.holeCore, { backgroundColor: colors.stone }]} />
+                <Text style={[styles.holeLabel, { color: colors.stoneHighlight }]}>{portal.label}</Text>
+              </View>
+            ))}
+          </React.Fragment>
+        ))}
 
         {phase === 'aiming' && (
           <>
@@ -515,8 +700,22 @@ export default function GameScreen() {
           <Text style={[styles.legendText, { color: colors.mutedForeground }]}>engel</Text>
           <View style={[styles.legendDot, { backgroundColor: colors.goal }]} />
           <Text style={[styles.legendText, { color: colors.mutedForeground }]}>çıkış</Text>
+          {movingBars.length > 0 && (
+            <>
+              <Feather name="move" size={12} color={colors.stone} />
+              <Text style={[styles.legendText, { color: colors.mutedForeground }]}>hareketli</Text>
+            </>
+          )}
+          {portals.length > 0 && (
+            <>
+              <View style={[styles.legendDot, { backgroundColor: colors.stoneHighlight }]} />
+              <Text style={[styles.legendText, { color: colors.mutedForeground }]}>geçit</Text>
+            </>
+          )}
         </View>
-        <Text style={[styles.footerHint, { color: colors.mutedForeground }]}>Yolunu önceden gör</Text>
+        <Text style={[styles.footerHint, { color: colors.mutedForeground }]}>
+          {portals.length > 0 ? 'Aynı harfli delikler eşleşir' : movingBars.length > 0 ? 'Kırmızı çubuklar hareketli' : 'Yolunu önceden gör'}
+        </Text>
       </View>
     </View>
   );
@@ -541,8 +740,12 @@ const styles = StyleSheet.create({
   goalCore: { width: 9, height: 9, borderRadius: 5 },
   goalText: { position: 'absolute', fontSize: 9, letterSpacing: 1.1, fontWeight: '700' },
   obstacle: { height: 4, position: 'absolute', borderRadius: 4, transformOrigin: 'left center' },
+  movingObstacle: { height: 6, borderWidth: 1 },
   stone: { width: STONE_RADIUS * 2, height: STONE_RADIUS * 2, borderRadius: STONE_RADIUS, position: 'absolute', alignItems: 'center', justifyContent: 'center', shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 7, shadowOffset: { width: 0, height: 3 }, elevation: 5 },
   stoneShine: { width: 5, height: 5, borderRadius: 3, position: 'absolute', top: 4, left: 5, opacity: 0.9 },
+  hole: { width: HOLE_RADIUS * 2, height: HOLE_RADIUS * 2, position: 'absolute', borderRadius: HOLE_RADIUS, borderWidth: 2, alignItems: 'center', justifyContent: 'center' },
+  holeCore: { width: 7, height: 7, borderRadius: 4 },
+  holeLabel: { position: 'absolute', top: 1, right: 5, fontSize: 8, fontWeight: '700' },
   aimGuide: { height: 2, position: 'absolute', transformOrigin: 'left center', borderRadius: 2 },
   aimPad: { width: AIM_PAD_SIZE, height: AIM_PAD_SIZE, position: 'absolute', borderRadius: AIM_PAD_SIZE / 2, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
   aimPadRing: { position: 'absolute', width: 72, height: 72, borderRadius: 36, borderWidth: 1, opacity: 0.45 },
