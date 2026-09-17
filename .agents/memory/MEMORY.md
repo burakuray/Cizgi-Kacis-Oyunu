@@ -1,0 +1,1 @@
+- [Expo route isolation](expo-route-isolation.md) — keep non-screen TypeScript modules outside `app/`, because Expo Router treats every file there as a route.
