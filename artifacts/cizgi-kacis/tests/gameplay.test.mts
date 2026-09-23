@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   makeCourse,
+  makeBouncyBarriers,
+  getDifficultyProfile,
   makeMovingBars,
   makePortals,
   positionMovingBar,
@@ -9,9 +11,22 @@ import {
   resolvePortalEntry,
   resolvePortalStep,
   isStoneColliding,
+  bounceFromBarriers,
 } from '../game-logic.ts';
 
 const BOARD = { width: 360, height: 560 };
+
+test('difficulty profile does not regress in later levels', () => {
+  const early = getDifficultyProfile(2);
+  const mid = getDifficultyProfile(8);
+  const late = getDifficultyProfile(12);
+  assert.ok(mid.barrierCount >= early.barrierCount);
+  assert.ok(late.barrierCount >= mid.barrierCount);
+  assert.ok(mid.movingBarSpeed > early.movingBarSpeed);
+  assert.ok(late.movingBarSpeed > mid.movingBarSpeed);
+  assert.ok(late.portalPairCount >= mid.portalPairCount);
+  assert.ok(late.bouncyBarrierCount >= mid.bouncyBarrierCount);
+});
 
 test('portal entry teleports to its pair and stays locked at the exit', () => {
   const [portal] = makePortals(4, BOARD.width, BOARD.height);
@@ -28,22 +43,29 @@ test('portal entry teleports to its pair and stays locked at the exit', () => {
   assert.equal(sameFrame.enteredPortalId, null);
 });
 
-test('moving-bar collision uses the bar position rendered at that time', () => {
+test('moving bars stay clear of static barriers over time', () => {
   const blueprints = makeMovingBars(2, BOARD.width, BOARD.height);
   assert.equal(blueprints.length, 1);
   const bar = blueprints[0];
   assert.ok(bar);
 
-  const time = 0.4;
-  const rendered = positionMovingBar(bar, time);
-  const renderedMidpoint = {
-    x: (rendered.x1 + rendered.x2) / 2,
-    y: (rendered.y1 + rendered.y2) / 2,
-  };
+  const course = makeCourse(2, BOARD.width, BOARD.height);
+  for (const time of [0, 0.2, 0.5, 1, 1.5]) {
+    const rendered = positionMovingBar(bar, time);
+    const midpoint = { x: (rendered.x1 + rendered.x2) / 2, y: (rendered.y1 + rendered.y2) / 2 };
+    assert.equal(isStoneColliding(midpoint, course, 18), false, `moving bar touched a static barrier at ${time}s: ${JSON.stringify(rendered)}`);
+    assert.deepEqual(renderedMovingBars(blueprints, time), [rendered]);
+  }
+});
 
-  assert.equal(isStoneColliding(renderedMidpoint, [rendered]), true);
-  assert.equal(isStoneColliding(renderedMidpoint, [bar.segment]), false);
-  assert.deepEqual(renderedMovingBars(blueprints, time), [rendered]);
+test('bouncy barriers reflect the stone without ending the attempt', () => {
+  const barriers = makeBouncyBarriers(3, BOARD.width, BOARD.height);
+  assert.equal(barriers.length, 1);
+  const barrier = barriers[0];
+  const response = bounceFromBarriers({ x: (barrier.x1 + barrier.x2) / 2, y: barrier.y1 - 14 }, { x: 1, y: 3 }, barriers);
+  assert.equal(response.bounced, true);
+  assert.ok(response.velocity.y < 0);
+  assert.ok(response.point.y < barrier.y1);
 });
 
 test('portal exit does not get hit by a moving bar on the teleport frame', () => {

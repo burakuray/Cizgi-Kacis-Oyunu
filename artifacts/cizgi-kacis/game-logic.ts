@@ -4,6 +4,7 @@ export type MovingBar = {
   id: string;
   segment: Segment;
   axis: 'x' | 'y';
+  direction: -1 | 1;
   travel: number;
   speed: number;
   phase: number;
@@ -12,6 +13,25 @@ export type PortalPair = { id: string; a: Point; b: Point; label: string };
 
 export const STONE_RADIUS = 13;
 export const HOLE_RADIUS = 18;
+
+export type DifficultyProfile = {
+  barrierCount: number;
+  movingBarCount: number;
+  movingBarSpeed: number;
+  portalPairCount: number;
+  bouncyBarrierCount: number;
+};
+
+export function getDifficultyProfile(level: number): DifficultyProfile {
+  const safeLevel = Math.max(1, Math.floor(level));
+  return {
+    barrierCount: Math.min(12, 2 + Math.floor((safeLevel + 1) / 2)),
+    movingBarCount: safeLevel < 2 ? 0 : Math.min(3, 1 + Math.floor((safeLevel - 2) / 4)),
+    movingBarSpeed: 1.1 + Math.min(1.1, Math.max(0, safeLevel - 2) * 0.1),
+    portalPairCount: safeLevel < 4 ? 0 : Math.min(3, 1 + Math.floor((safeLevel - 4) / 4)),
+    bouncyBarrierCount: safeLevel < 3 ? 0 : Math.min(2, 1 + Math.floor((safeLevel - 3) / 6)),
+  };
+}
 
 export function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
@@ -30,14 +50,14 @@ export function distanceToSegment(point: Point, segment: Segment) {
 
 export function makeCourse(level: number, width: number, height: number): Segment[] {
   const lines: Segment[] = [];
-  const count = Math.min(2 + level, 9);
+  const { barrierCount: count } = getDifficultyProfile(level);
   const usableTop = Math.max(94, height * 0.14);
   const usableBottom = height - 116;
   const laneWidth = width / (count + 1);
 
   for (let index = 0; index < count; index += 1) {
     const x = laneWidth * (index + 1);
-    const gap = 48 + ((level + index * 13) % 3) * 17;
+    const gap = Math.max(30, 62 - Math.floor(level / 3) * 5) + ((level + index * 13) % 3) * 11;
     const shift = (index % 2) * 24;
     const topLength = Math.max(44, (height - usableTop - usableBottom) / 2 + shift);
     const topY = usableTop + ((index * 37 + level * 19) % 55);
@@ -54,47 +74,72 @@ export function makeCourse(level: number, width: number, height: number): Segmen
     const y = usableTop + 214 + ((level * 17) % 56);
     lines.push({ x1: width * 0.58, y1: y, x2: width - 26, y2: y });
   }
+  if (level >= 7) {
+    const y = usableTop + 158 + ((level * 29) % 52);
+    lines.push({ x1: 26, y1: y, x2: width * 0.34, y2: y });
+  }
   return lines;
 }
 
-export function makeMovingBars(level: number, width: number, height: number): MovingBar[] {
-  if (level < 2 || level % 4 === 0) return [];
+export function makeBouncyBarriers(level: number, width: number, height: number): Segment[] {
+  const { bouncyBarrierCount } = getDifficultyProfile(level);
+  if (bouncyBarrierCount === 0) return [];
 
   const usableTop = Math.max(94, height * 0.14);
   const usableBottom = height - 116;
-  const middle = usableTop + (usableBottom - usableTop) * 0.52;
-  const bars: MovingBar[] = [];
+  const y = usableTop + 62 + ((level * 31) % Math.max(40, usableBottom - usableTop - 120));
+  const barriers: Segment[] = [];
+  for (let index = 0; index < bouncyBarrierCount; index += 1) {
+    const length = width * (index === 0 ? 0.34 : 0.24);
+    const left = index === 0 ? (level % 2 === 0 ? width * 0.1 : width * 0.56) : width * 0.18;
+    const offsetY = index * 74;
+    barriers.push({ x1: left, y1: y + offsetY, x2: left + length, y2: y + offsetY });
+  }
+  return barriers;
+}
 
-  if (level % 2 === 0) {
-    bars.push({
-      id: `sweep-${level}`,
-      segment: { x1: width * 0.16, y1: middle, x2: width * 0.84, y2: middle },
-      axis: 'y',
-      travel: 22 + (level % 3) * 8,
-      speed: 1.45,
-      phase: level * 0.7,
+export function makeMovingBars(level: number, width: number, height: number): MovingBar[] {
+  const { movingBarCount, movingBarSpeed } = getDifficultyProfile(level);
+  if (movingBarCount === 0) return [];
+
+  const course = makeCourse(level, width, height);
+  const lanes: Array<{ minX: number; maxX: number; centerX: number }> = [{
+    minX: 28,
+    maxX: width - 28,
+    centerX: width / 2,
+  }];
+
+  const safeYs: number[] = [];
+  for (let y = 110; y <= height - 110; y += 18) {
+    const blocked = course.some((segment) => {
+      const minY = Math.min(segment.y1, segment.y2) - STONE_RADIUS * 2;
+      const maxY = Math.max(segment.y1, segment.y2) + STONE_RADIUS * 2;
+      return y >= minY && y <= maxY;
     });
-  } else {
-    const x = width * (level % 3 === 0 ? 0.67 : 0.34);
-    bars.push({
-      id: `gate-${level}`,
-      segment: { x1: x, y1: usableTop + 62, x2: x, y2: usableBottom - 30 },
-      axis: 'x',
-      travel: 20 + (level % 4) * 5,
-      speed: 1.2,
-      phase: level * 0.55,
-    });
+    if (!blocked) safeYs.push(y);
   }
 
-  if (level >= 6 && level % 3 === 0) {
-    const x = width * 0.5;
+  if (safeYs.length === 0) return [];
+
+  const barLength = 88;
+  const count = movingBarCount;
+  const bars: MovingBar[] = [];
+
+  for (let index = 0; index < count; index += 1) {
+    const lane = lanes[(level + index) % lanes.length];
+    const y = safeYs[(level * 3 + index) % safeYs.length];
+    const direction = (level + index) % 2 === 0 ? 1 : -1;
+    const maxTravel = Math.max(18, Math.min(40, (lane.maxX - lane.minX - barLength) / 2));
+    const centerX = lane.centerX;
+
     bars.push({
-      id: `center-${level}`,
-      segment: { x1: x, y1: usableTop + 26, x2: x, y2: usableTop + 116 },
+      id: `sweep-${level}-${index}`,
+      segment: { x1: centerX - barLength / 2, y1: y, x2: centerX + barLength / 2, y2: y },
       axis: 'x',
-      travel: 24,
-      speed: 1.8,
-      phase: level * 0.9,
+      direction: direction as -1 | 1,
+      travel: maxTravel,
+      speed: movingBarSpeed + ((level + index) % 3) * 0.12,
+      phase: (level + index) * 0.8,
     });
   }
 
@@ -102,7 +147,8 @@ export function makeMovingBars(level: number, width: number, height: number): Mo
 }
 
 export function positionMovingBar(bar: MovingBar, time: number): Segment {
-  const offset = Math.sin(time * bar.speed + bar.phase) * bar.travel;
+  const offset = Math.sin(time * bar.speed + bar.phase) * bar.travel * bar.direction;
+
   if (bar.axis === 'x') {
     return {
       x1: bar.segment.x1 + offset,
@@ -111,6 +157,7 @@ export function positionMovingBar(bar: MovingBar, time: number): Segment {
       y2: bar.segment.y2,
     };
   }
+
   return {
     x1: bar.segment.x1,
     y1: bar.segment.y1 + offset,
@@ -124,11 +171,12 @@ export function renderedMovingBars(blueprints: MovingBar[], time: number) {
 }
 
 export function makePortals(level: number, width: number, height: number): PortalPair[] {
-  if (level < 4 || level % 4 !== 0) return [];
+  const { portalPairCount } = getDifficultyProfile(level);
+  if (portalPairCount === 0) return [];
 
   const usableTop = Math.max(94, height * 0.14);
   const usableBottom = height - 116;
-  const pairCount = level >= 8 ? 2 : 1;
+  const pairCount = portalPairCount;
   const pairs: PortalPair[] = [];
 
   for (let index = 0; index < pairCount; index += 1) {
@@ -152,6 +200,29 @@ export function makePortals(level: number, width: number, height: number): Porta
 
 export function isStoneColliding(point: Point, obstacles: Segment[], padding = 3) {
   return obstacles.some((line) => distanceToSegment(point, line) < STONE_RADIUS + padding);
+}
+
+export function bounceFromBarriers(point: Point, velocity: Point, barriers: Segment[]) {
+  const barrier = barriers.find((line) => distanceToSegment(point, line) < STONE_RADIUS + 8);
+  if (!barrier) return { point, velocity, bounced: false };
+
+  const horizontal = Math.abs(barrier.x2 - barrier.x1) >= Math.abs(barrier.y2 - barrier.y1);
+  const clearance = STONE_RADIUS + 10;
+  if (horizontal) {
+    const direction = point.y <= barrier.y1 ? -1 : 1;
+    return {
+      point: { x: point.x, y: barrier.y1 + direction * clearance },
+      velocity: { x: velocity.x, y: velocity.y === 0 ? direction * 2.2 : -velocity.y },
+      bounced: true,
+    };
+  }
+
+  const direction = point.x <= barrier.x1 ? -1 : 1;
+  return {
+    point: { x: barrier.x1 + direction * clearance, y: point.y },
+    velocity: { x: velocity.x === 0 ? direction * 2.2 : -velocity.x, y: velocity.y },
+    bounced: true,
+  };
 }
 
 type PortalEntry = {

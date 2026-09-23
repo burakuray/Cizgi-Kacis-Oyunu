@@ -16,6 +16,7 @@
     "@expo/vector-icons": "^15.0.2",
     "@react-native-async-storage/async-storage": "2.2.0",
     "@stardazed/streams-text-encoding": "^1.0.2",
+    "@tailwindcss/oxide": "^4.3.3",
     "@tanstack/react-query": "catalog:",
     "@types/react": "~19.2.2",
     "@types/react-dom": "~19.2.2",
@@ -40,6 +41,8 @@
     "expo-symbols": "~57.0.1",
     "expo-system-ui": "~57.0.1",
     "expo-web-browser": "~57.0.1",
+    "lightningcss": "^1.33.0",
+    "lightningcss-darwin-arm64": "^1.33.0",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-native": "0.86.3",
@@ -54,5 +57,9 @@
     "typescript": "~6.0.3",
     "zod": "catalog:",
     "zod-validation-error": "^3.4.0"
+  },
+  "dependencies": {
+    "expo-av": "~16.0.8",
+    "expo-localization": "57.0.2"
   }
 }
