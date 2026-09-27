@@ -27,11 +27,12 @@ import {
   makeMovingBars,
   makePortals,
   renderedMovingBars,
+  resolveLifeLoss,
   resolvePortalStep,
 } from '@/game-logic';
 
 type Point = { x: number; y: number };
-type Phase = 'aiming' | 'moving' | 'hit' | 'complete';
+type Phase = 'aiming' | 'moving' | 'hit' | 'complete' | 'demoted' | 'gameover';
 type Completion = { stars: number; medal: string; score: number; riskBonus: number };
 
 const BEST_LEVEL_KEY = '@cizgi-kacis/best-level';
@@ -44,6 +45,7 @@ const SELECTED_SKIN_KEY = '@cizgi-kacis/selected-skin';
 const BEST_SCORE_KEY = '@cizgi-kacis/best-score';
 const SCORE_HISTORY_KEY = '@cizgi-kacis/score-history';
 const SOUND_ENABLED_KEY = '@cizgi-kacis/sound-enabled';
+const LEVEL_LIVES = 3;
 const MAX_DRAG = 94;
 const MIN_DRAG = 16;
 const AIM_PAD_SIZE = 96;
@@ -85,9 +87,11 @@ export default function GameScreen() {
   const [level, setLevel] = useState(1);
   const [bestLevel, setBestLevel] = useState(1);
   const [bestScore, setBestScore] = useState(0);
+  const [runScore, setRunScore] = useState(0);
   const [soundEnabled, setSoundEnabledState] = useState(true);
   const [attempts, setAttempts] = useState(0);
   const [levelAttempts, setLevelAttempts] = useState(0);
+  const [lives, setLives] = useState(LEVEL_LIVES);
   const [levelStars, setLevelStars] = useState<Record<string, number>>({});
   const [streak, setStreak] = useState(0);
   const [dailyProgress, setDailyProgress] = useState(0);
@@ -251,15 +255,29 @@ export default function GameScreen() {
       success ? Haptics.NotificationFeedbackType.Success : Haptics.NotificationFeedbackType.Error,
     );
     if (!success) {
+      const nextLevelAttempts = levelAttempts + 1;
+      const lifeLoss = resolveLifeLoss(level, lives, LEVEL_LIVES);
       setAttempts((current) => current + 1);
-      setLevelAttempts((current) => current + 1);
-      resetStone();
+      setLevelAttempts(nextLevelAttempts);
+      setLives(lifeLoss.lives);
+
+      if (lifeLoss.outcome === 'retry') {
+        resetStone();
+      } else if (lifeLoss.outcome === 'demoted') {
+        setLevel(lifeLoss.level);
+        setLevelAttempts(0);
+        resetStone();
+        setGamePhase('demoted');
+      } else {
+        setGamePhase('gameover');
+      }
     } else {
       void playSound('success');
       const stars = starsForAttempts(levelAttempts);
       const medal = levelAttempts === 0 ? 'Kusursuz atış' : stars === 2 ? 'Temiz geçiş' : 'Bölüm tamamlandı';
       const score = scoreForLevel(level, levelAttempts, riskBonusRef.current);
       const nextBestScore = Math.max(bestScore, score);
+      setRunScore((current) => current + score);
       const nextStars = { ...levelStars, [String(level)]: Math.max(levelStars[String(level)] ?? 0, stars) };
       const nextStreak = streak + 1;
       const nextDailyProgress = Math.min(3, dailyProgress + 1);
@@ -288,7 +306,7 @@ export default function GameScreen() {
       ]);
     }
     setTimeout(() => setFlash(false), 260);
-  }, [bestScore, burstOpacity, burstScale, dailyProgress, level, levelAttempts, levelStars, resetStone, setGamePhase, streak, unlockedSkins]);
+  }, [bestScore, burstOpacity, burstScale, dailyProgress, level, levelAttempts, levelStars, lives, resetStone, setGamePhase, streak, unlockedSkins]);
 
   useEffect(() => {
     if (phase !== 'moving') {
@@ -480,6 +498,7 @@ export default function GameScreen() {
   const nextLevel = useCallback(async () => {
     const next = level + 1;
     setLevel(next);
+    setLives(LEVEL_LIVES);
     if (next > bestLevel) {
       setBestLevel(next);
       await AsyncStorage.setItem(BEST_LEVEL_KEY, String(next));
@@ -492,6 +511,22 @@ export default function GameScreen() {
   }, [bestLevel, level, resetStone, setGamePhase]);
 
   const retry = useCallback(() => {
+    resetStone();
+    setGamePhase('aiming');
+  }, [resetStone, setGamePhase]);
+
+  const continueAfterDemotion = useCallback(() => {
+    setGamePhase('aiming');
+  }, [setGamePhase]);
+
+  const restartRun = useCallback(() => {
+    setLevel(1);
+    setLives(LEVEL_LIVES);
+    setLevelAttempts(0);
+    setAttempts(0);
+    setRunScore(0);
+    setCompletion(null);
+    setShowHelp(true);
     resetStone();
     setGamePhase('aiming');
   }, [resetStone, setGamePhase]);
@@ -566,6 +601,21 @@ export default function GameScreen() {
             {phase === 'moving' ? t('moving') : t('drag')}
           </Text>
         </View>
+      </View>
+      <View style={styles.livesRow}>
+        <Text style={[styles.livesLabel, { color: colors.mutedForeground }]}>{t('lives')}</Text>
+        <View style={styles.hearts}>
+          {Array.from({ length: LEVEL_LIVES }).map((_, index) => (
+            <Feather
+              key={`life-${index}`}
+              name="heart"
+              size={14}
+              color={index < lives ? colors.obstacle : colors.border}
+              fill={index < lives ? colors.obstacle : 'transparent'}
+            />
+          ))}
+        </View>
+        <Text style={[styles.livesCount, { color: colors.ink }]}>{lives}/{LEVEL_LIVES}</Text>
       </View>
       <View style={styles.chapterProgressRow}>
         <Text style={[styles.chapterProgressLabel, { color: chapterAccent }]}>{chapter}</Text>
@@ -893,6 +943,7 @@ export default function GameScreen() {
             </View>
             <Text style={[styles.resultTitle, { color: colors.ink }]}>{t('hitTitle')}</Text>
             <Text style={[styles.resultCopy, { color: colors.mutedForeground }]}>{t('hitCopy')}</Text>
+            <Text style={[styles.livesMessage, { color: colors.stoneHighlight }]}>{formatCopy('livesLeft', { count: String(lives) })}</Text>
             <Pressable
               testID="retry-button"
               onPress={retry}
@@ -900,6 +951,48 @@ export default function GameScreen() {
             >
               <Feather name="rotate-cw" size={16} color={colors.gameBackground} />
               <Text style={[styles.resultButtonText, { color: colors.gameBackground }]}>{t('retry')}</Text>
+            </Pressable>
+          </View>
+        )}
+
+        {phase === 'demoted' && (
+          <View style={[styles.resultCard, { backgroundColor: colors.gameSurfaceRaised }]}>
+            <View style={[styles.resultIcon, { backgroundColor: `${colors.stoneHighlight}22` }]}>
+              <Feather name="corner-left-up" size={20} color={colors.stoneHighlight} />
+            </View>
+            <Text style={[styles.resultTitle, { color: colors.ink }]}>{t('demotedTitle')}</Text>
+            <Text style={[styles.resultCopy, { color: colors.mutedForeground }]}>
+              {formatCopy('demotedCopy', { level: formatLevel(level) })}
+            </Text>
+            <Pressable
+              onPress={continueAfterDemotion}
+              style={({ pressed }) => [styles.resultButton, { backgroundColor: colors.stone, opacity: pressed ? 0.8 : 1 }]}
+            >
+              <Text style={[styles.resultButtonText, { color: colors.gameBackground }]}>{t('continue')}</Text>
+              <Feather name="arrow-right" size={17} color={colors.gameBackground} />
+            </Pressable>
+          </View>
+        )}
+
+        {phase === 'gameover' && (
+          <View style={[styles.resultCard, { backgroundColor: colors.gameSurfaceRaised }]}>
+            <View style={[styles.resultIcon, { backgroundColor: `${colors.obstacle}22` }]}>
+              <Feather name="rotate-ccw" size={20} color={colors.obstacle} />
+            </View>
+            <Text style={[styles.resultTitle, { color: colors.ink }]}>{t('gameOverTitle')}</Text>
+            <Text style={[styles.scoreText, { color: colors.goal }]}>{runScore} {t('score')}</Text>
+            <Text style={[styles.resultCopy, { color: colors.mutedForeground }]}>
+              {t('gameOverCopy')}
+            </Text>
+            <Pressable
+              onPress={restartRun}
+              style={({ pressed }) => [styles.resultButton, { backgroundColor: colors.goal, opacity: pressed ? 0.8 : 1 }]}
+            >
+              <Feather name="refresh-cw" size={16} color={colors.gameBackground} />
+              <Text style={[styles.resultButtonText, { color: colors.gameBackground }]}>{t('restart')}</Text>
+            </Pressable>
+            <Pressable onPress={() => router.push('/leaderboard')} style={styles.secondaryAction}>
+              <Text style={[styles.secondaryActionText, { color: colors.mutedForeground }]}>{t('leaderboard')}</Text>
             </Pressable>
           </View>
         )}
@@ -987,6 +1080,10 @@ const styles = StyleSheet.create({
   statsRow: { flexDirection: 'row', alignItems: 'center', gap: 15, paddingBottom: 11 },
   stat: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   statText: { fontSize: 12, fontWeight: '600' },
+  livesRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingBottom: 9 },
+  livesLabel: { fontSize: 9, fontWeight: '800', letterSpacing: 1.2 },
+  hearts: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  livesCount: { fontSize: 10, fontWeight: '800' },
   statusHint: { flex: 1, flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center', gap: 6 },
   statusDot: { width: 6, height: 6, borderRadius: 3 },
   tip: { flex: 1, textAlign: 'right', fontSize: 11 },
@@ -1034,6 +1131,9 @@ const styles = StyleSheet.create({
   scoreText: { fontSize: 17, fontWeight: '800', marginTop: 8 },
   riskText: { fontSize: 11, fontWeight: '800', marginTop: 3 },
   resultCopy: { fontSize: 12, lineHeight: 18, textAlign: 'center', marginTop: 6, maxWidth: 235 },
+  livesMessage: { fontSize: 11, fontWeight: '800', marginTop: 10 },
+  secondaryAction: { paddingVertical: 9, paddingHorizontal: 14, marginTop: 4 },
+  secondaryActionText: { fontSize: 11, fontWeight: '700' },
   resultButton: { marginTop: 16, borderRadius: 13, paddingVertical: 12, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center', gap: 8 },
   resultButtonText: { fontSize: 13, fontWeight: '700' },
   footer: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingTop: 11, paddingBottom: 10 },

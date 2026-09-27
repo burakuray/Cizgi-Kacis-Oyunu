@@ -33,6 +33,19 @@ export function getDifficultyProfile(level: number): DifficultyProfile {
   };
 }
 
+export type LifeLossResult = {
+  outcome: 'retry' | 'demoted' | 'gameover';
+  level: number;
+  lives: number;
+};
+
+export function resolveLifeLoss(level: number, lives: number, maxLives = 3): LifeLossResult {
+  const remainingLives = Math.max(0, lives - 1);
+  if (remainingLives > 0) return { outcome: 'retry', level, lives: remainingLives };
+  if (level > 1) return { outcome: 'demoted', level: level - 1, lives: maxLives };
+  return { outcome: 'gameover', level: 1, lives: 0 };
+}
+
 export function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }

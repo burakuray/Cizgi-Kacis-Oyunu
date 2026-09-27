@@ -9,6 +9,7 @@ import {
   positionMovingBar,
   renderedMovingBars,
   resolvePortalEntry,
+  resolveLifeLoss,
   resolvePortalStep,
   isStoneColliding,
   bounceFromBarriers,
@@ -26,6 +27,12 @@ test('difficulty profile does not regress in later levels', () => {
   assert.ok(late.movingBarSpeed > mid.movingBarSpeed);
   assert.ok(late.portalPairCount >= mid.portalPairCount);
   assert.ok(late.bouncyBarrierCount >= mid.bouncyBarrierCount);
+});
+
+test('life loss retries, demotes, then ends the run at level one', () => {
+  assert.deepEqual(resolveLifeLoss(4, 2), { outcome: 'retry', level: 4, lives: 1 });
+  assert.deepEqual(resolveLifeLoss(4, 1), { outcome: 'demoted', level: 3, lives: 3 });
+  assert.deepEqual(resolveLifeLoss(1, 1), { outcome: 'gameover', level: 1, lives: 0 });
 });
 
 test('portal entry teleports to its pair and stays locked at the exit', () => {
