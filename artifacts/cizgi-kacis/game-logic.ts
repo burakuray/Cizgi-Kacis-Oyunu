@@ -444,6 +444,11 @@ export function makePortals(level: number, width: number, height: number): Porta
     y2: 51,
   };
   const DIRECT_SPINE_CLEARANCE = 44;
+  const goalPoint = { x: width / 2, y: 51 };
+  const canReachGoalDirectly = (candidate: Point) => {
+    const shot: Segment = { x1: candidate.x, y1: candidate.y, x2: goalPoint.x, y2: goalPoint.y };
+    return ![...fixedBars, ...sweeps].some((bar) => segmentDistance(shot, bar) <= STONE_RADIUS + 4);
+  };
 
   const scoreFor = (sweepNeed: number) => (candidate: Point) =>
     Math.min(
@@ -452,6 +457,7 @@ export function makePortals(level: number, width: number, height: number): Porta
         { x1: candidate.x, y1: candidate.y, x2: candidate.x, y2: candidate.y },
         directEscapeLine,
       ) - DIRECT_SPINE_CLEARANCE,
+      canReachGoalDirectly(candidate) ? -60 : 0,
       sweeps.length > 0 ? clearanceTo(candidate, sweeps) - sweepNeed : Infinity,
       placed.reduce((nearest, other) => Math.min(nearest, Math.hypot(candidate.x - other.x, candidate.y - other.y)), Infinity) - PORTAL_GAP,
     );
