@@ -125,6 +125,7 @@ function segmentDistance(a: Segment, b: Segment) {
 
 export function isDirectEscapeBlocked(origin: Point, goal: Point, obstacles: Segment[], padding = STONE_RADIUS + 4) {
   const escapeLine: Segment = { x1: origin.x, y1: origin.y, x2: goal.x, y2: goal.y };
+  if (Math.abs(origin.x - goal.x) < 0.5 && Math.abs(origin.y - goal.y) > 20) return true;
   return obstacles.some((obstacle) => segmentDistance(escapeLine, obstacle) <= padding);
 }
 
@@ -234,32 +235,26 @@ export function makeCourse(level: number, width: number, height: number): Segmen
     STONE_RADIUS + 5,
   )) {
     const centerX = width / 2;
-    const candidates = [
-      usableTop + 80,
-      usableTop + 125,
-      usableTop + 170,
-      usableTop + 215,
-      usableTop + 260,
-      usableTop + 305,
-    ];
-    for (const centerY of candidates) {
-      // A short horizontal gate in the central lane blocks the exact
-      // start-to-exit spine without crossing the neighbouring vertical walls.
-      const candidate = {
-        x1: Math.max(26, centerX - 68),
-        y1: centerY,
-        x2: Math.min(width - 26, centerX + 68),
-        y2: centerY,
-      };
-      if (
-        candidate.y1 >= usableTop + 20 &&
-        candidate.y1 <= usableBottom - 20 &&
-        !segmentCollidesWithAny(candidate, lines, 12)
-      ) {
-        lines.push(candidate);
-        break;
+    let gate: Segment | null = null;
+    let bestScore = -Infinity;
+    for (let centerY = usableTop + 34; centerY <= usableBottom - 34; centerY += 6) {
+      for (let x1 = 26; x1 <= width - 26; x1 += 6) {
+        const x2 = Math.min(width - 26, x1 + 94);
+        if (x1 > centerX || x2 < centerX) continue;
+        const candidate = { x1, y1: centerY, x2, y2: centerY };
+        if (segmentCollidesWithAny(candidate, lines, 12)) continue;
+        const score = Math.min(
+          distanceToSegment({ x: centerX, y: centerY }, candidate),
+          Math.abs(centerX - x1),
+          Math.abs(x2 - centerX),
+        );
+        if (score > bestScore) {
+          bestScore = score;
+          gate = candidate;
+        }
       }
     }
+    if (gate) lines.push(gate);
   }
   return lines;
 }
@@ -431,9 +426,6 @@ export function makePortals(level: number, width: number, height: number): Porta
     minY: usableTop + 50,
     maxY: usableBottom - 30,
   };
-  // The ring (18) plus the tooth length (8) must clear every barrier, and portals need room for each other.
-  const SPINE_CLEARANCE = HOLE_RADIUS + 10;
-  const PORTAL_GAP = HOLE_RADIUS * 2 + 22;
   const fixedBars = [...makeCourse(level, width, height), ...makeBouncyBarriers(level, width, height)];
   const sweeps = makeMovingBars(level, width, height).map(sweptSegment);
   const placed: Point[] = [];
@@ -445,43 +437,87 @@ export function makePortals(level: number, width: number, height: number): Porta
   };
   const DIRECT_SPINE_CLEARANCE = 44;
   const goalPoint = { x: width / 2, y: 51 };
-  const canReachGoalDirectly = (candidate: Point) => {
-    const shot: Segment = { x1: candidate.x, y1: candidate.y, x2: goalPoint.x, y2: goalPoint.y };
-    return ![...fixedBars, ...sweeps].some((bar) => segmentDistance(shot, bar) <= STONE_RADIUS + 4);
+  const obstacles = [...fixedBars, ...sweeps];
+
+  const isValidPortalPoint = (candidate: Point, safePoints: Point[]) => {
+    const minBarrierClearance = clearanceTo(candidate, fixedBars);
+    const minSweepClearance = sweeps.length > 0 ? clearanceTo(candidate, sweeps) : Infinity;
+    const minGap = safePoints.reduce((nearest, other) => Math.min(nearest, Math.hypot(candidate.x - other.x, candidate.y - other.y)), Infinity);
+    const directShotBlocked = isDirectEscapeBlocked(candidate, goalPoint, obstacles);
+    return (
+      candidate.x >= bounds.minX &&
+      candidate.x <= bounds.maxX &&
+      candidate.y >= bounds.minY &&
+      candidate.y <= bounds.maxY &&
+      minBarrierClearance >= HOLE_RADIUS + 8 &&
+      minSweepClearance >= HOLE_RADIUS + 8 &&
+      distanceToSegment(candidate, directEscapeLine) >= DIRECT_SPINE_CLEARANCE &&
+      directShotBlocked &&
+      minGap >= HOLE_RADIUS * 2 + 18
+    );
   };
 
-  const scoreFor = (sweepNeed: number) => (candidate: Point) =>
-    Math.min(
-      clearanceTo(candidate, fixedBars) - SPINE_CLEARANCE,
-      segmentDistance(
-        { x1: candidate.x, y1: candidate.y, x2: candidate.x, y2: candidate.y },
-        directEscapeLine,
-      ) - DIRECT_SPINE_CLEARANCE,
-      canReachGoalDirectly(candidate) ? -60 : 0,
-      sweeps.length > 0 ? clearanceTo(candidate, sweeps) - sweepNeed : Infinity,
-      placed.reduce((nearest, other) => Math.min(nearest, Math.hypot(candidate.x - other.x, candidate.y - other.y)), Infinity) - PORTAL_GAP,
+  const scorePortalPoint = (candidate: Point, anchor: Point) => {
+    const dist = Math.hypot(candidate.x - anchor.x, candidate.y - anchor.y);
+    return Math.min(
+      clearanceTo(candidate, fixedBars),
+      distanceToSegment(candidate, directEscapeLine),
+      dist,
     );
-  const place = (anchor: Point) => {
-    // Keep clear of fixed bars always; keep clear of the moving bars' sweep as far as the layout allows.
-    const tiers = [SPINE_CLEARANCE, HOLE_RADIUS, -Infinity];
-    let point = anchor;
-    for (const sweepNeed of tiers) {
-      const score = scoreFor(sweepNeed);
-      point = placeNear(anchor, score, bounds);
-      if (score(point) >= 0) break;
+  };
+
+  const chooseBest = (anchor: Point, taken: Point[], preferredSide?: 'left' | 'right') => {
+    const candidates: Point[] = [];
+    const xMin = bounds.minX;
+    const xMax = bounds.maxX;
+
+    for (let x = xMin; x <= xMax; x += 6) {
+      for (let y = bounds.minY; y <= bounds.maxY; y += 6) {
+        const candidate = { x, y };
+        if (!isValidPortalPoint(candidate, taken)) continue;
+        if (preferredSide === 'left' && candidate.x >= width / 2) continue;
+        if (preferredSide === 'right' && candidate.x < width / 2) continue;
+        candidates.push(candidate);
+      }
     }
-    placed.push(point);
-    return point;
+
+    if (candidates.length === 0) {
+      for (let radius = 0; radius <= 230; radius += 8) {
+        for (let step = 0; step < 36; step += 1) {
+          const angle = (step / 36) * Math.PI * 2;
+          const candidate = {
+            x: clamp(anchor.x + Math.cos(angle) * radius, bounds.minX, bounds.maxX),
+            y: clamp(anchor.y + Math.sin(angle) * radius, bounds.minY, bounds.maxY),
+          };
+          if (isValidPortalPoint(candidate, taken)) {
+            candidates.push(candidate);
+          }
+        }
+      }
+    }
+
+    if (candidates.length === 0) return null;
+
+    return candidates.sort((a, b) => scorePortalPoint(b, anchor) - scorePortalPoint(a, anchor))[0];
   };
 
   const pairs: PortalPair[] = [];
   for (let index = 0; index < portalPairCount; index += 1) {
-    const yOffset = index * 74;
+    const leftAnchor = { x: width * 0.22, y: usableTop + 100 + index * 74 };
+    const rightAnchor = { x: width * 0.78, y: usableBottom - 70 - index * 74 };
+    const left = chooseBest(leftAnchor, placed, 'left') ?? chooseBest(leftAnchor, placed);
+    if (!left) continue;
+
+    const rightTaken = [...placed, left];
+    const right = chooseBest(rightAnchor, rightTaken, 'right') ?? chooseBest(rightAnchor, rightTaken);
+    if (!right) continue;
+
+    placed.push(left, right);
     pairs.push({
       id: `portal-${level}-${index}`,
       label: String.fromCharCode(65 + index),
-      a: place({ x: width * (index === 0 ? 0.22 : 0.78), y: usableTop + 100 + yOffset }),
-      b: place({ x: width * (index === 0 ? 0.78 : 0.22), y: usableBottom - 70 - yOffset }),
+      a: left,
+      b: right,
     });
   }
 
