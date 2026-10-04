@@ -61,6 +61,36 @@ export function distanceToSegment(point: Point, segment: Segment) {
   return Math.hypot(point.x - nearest.x, point.y - nearest.y);
 }
 
+function clearanceTo(point: Point, segments: Segment[]) {
+  return segments.reduce((nearest, segment) => Math.min(nearest, distanceToSegment(point, segment)), Infinity);
+}
+
+type PlacementBounds = { minX: number; maxX: number; minY: number; maxY: number };
+
+/**
+ * Finds the spot closest to `anchor` whose `score` is >= 0 (searching outwards in rings).
+ * Deterministic, so a level always looks the same. Falls back to the best score found.
+ */
+function placeNear(anchor: Point, score: (point: Point) => number, bounds: PlacementBounds): Point {
+  const inside = (point: Point) => ({ x: clamp(point.x, bounds.minX, bounds.maxX), y: clamp(point.y, bounds.minY, bounds.maxY) });
+  let best = inside(anchor);
+  let bestScore = score(best);
+  if (bestScore >= 0) return best;
+  for (let radius = 6; radius <= 190; radius += 6) {
+    for (let step = 0; step < 24; step += 1) {
+      const angle = (step / 24) * Math.PI * 2;
+      const candidate = inside({ x: anchor.x + Math.cos(angle) * radius, y: anchor.y + Math.sin(angle) * radius });
+      const candidateScore = score(candidate);
+      if (candidateScore >= 0) return candidate;
+      if (candidateScore > bestScore) {
+        best = candidate;
+        bestScore = candidateScore;
+      }
+    }
+  }
+  return best;
+}
+
 export function makeCourse(level: number, width: number, height: number): Segment[] {
   const lines: Segment[] = [];
   const { barrierCount: count } = getDifficultyProfile(level);
@@ -94,6 +124,14 @@ export function makeCourse(level: number, width: number, height: number): Segmen
   return lines;
 }
 
+/** The strip a moving bar sweeps over time, as one segment (used so other pieces keep clear of it). */
+function sweptSegment(bar: MovingBar): Segment {
+  const { segment, axis, travel } = bar;
+  return axis === 'x'
+    ? { x1: segment.x1 - travel, y1: segment.y1, x2: segment.x2 + travel, y2: segment.y2 }
+    : { x1: segment.x1, y1: segment.y1 - travel, x2: segment.x2, y2: segment.y2 + travel };
+}
+
 export function makeBouncyBarriers(level: number, width: number, height: number): Segment[] {
   const { bouncyBarrierCount } = getDifficultyProfile(level);
   if (bouncyBarrierCount === 0) return [];
@@ -101,14 +139,38 @@ export function makeBouncyBarriers(level: number, width: number, height: number)
   const usableTop = Math.max(94, height * 0.14);
   const usableBottom = height - 116;
   const y = usableTop + 62 + ((level * 31) % Math.max(40, usableBottom - usableTop - 120));
-  const barriers: Segment[] = [];
-  for (let index = 0; index < bouncyBarrierCount; index += 1) {
-    const length = width * (index === 0 ? 0.34 : 0.24);
-    const left = index === 0 ? (level % 2 === 0 ? width * 0.1 : width * 0.56) : width * 0.18;
-    const offsetY = index * 74;
-    barriers.push({ x1: left, y1: y + offsetY, x2: left + length, y2: y + offsetY });
+  const build = (baseY: number) => {
+    const barriers: Segment[] = [];
+    for (let index = 0; index < bouncyBarrierCount; index += 1) {
+      const length = width * (index === 0 ? 0.34 : 0.24);
+      const left = index === 0 ? (level % 2 === 0 ? width * 0.1 : width * 0.56) : width * 0.18;
+      const offsetY = index * 74;
+      barriers.push({ x1: left, y1: baseY + offsetY, x2: left + length, y2: baseY + offsetY });
+    }
+    return barriers;
+  };
+
+  // Slide the bouncers up or down until they no longer sit on top of a horizontal thorn bar.
+  const horizontalBars = [
+    ...makeCourse(level, width, height).filter((segment) => segment.y1 === segment.y2),
+    ...makeMovingBars(level, width, height).map(sweptSegment),
+  ];
+  const overlapsBar = (candidate: Segment[]) =>
+    candidate.some((bouncer) =>
+      horizontalBars.some(
+        (bar) =>
+          Math.abs(bar.y1 - bouncer.y1) < 34 &&
+          Math.min(bar.x2, bouncer.x2) - Math.max(bar.x1, bouncer.x1) > -10,
+      ),
+    );
+  const lowest = usableBottom - 40;
+  for (const shift of [0, 18, -18, 36, -36, 54, -54, 72, -72, 90, -90, 108, -108]) {
+    const candidate = build(y + shift);
+    const last = candidate[candidate.length - 1];
+    if (candidate[0].y1 < usableTop + 36 || last.y1 > lowest) continue;
+    if (!overlapsBar(candidate)) return candidate;
   }
-  return barriers;
+  return build(y);
 }
 
 export function makeMovingBars(level: number, width: number, height: number): MovingBar[] {
@@ -122,15 +184,19 @@ export function makeMovingBars(level: number, width: number, height: number): Mo
     centerX: width / 2,
   }];
 
-  const safeYs: number[] = [];
-  for (let y = 110; y <= height - 110; y += 18) {
-    const blocked = course.some((segment) => {
-      const minY = Math.min(segment.y1, segment.y2) - STONE_RADIUS * 2;
-      const maxY = Math.max(segment.y1, segment.y2) + STONE_RADIUS * 2;
-      return y >= minY && y <= maxY;
-    });
-    if (!blocked) safeYs.push(y);
-  }
+  const scanSafeYs = (bands: Array<{ minY: number; maxY: number }>) => {
+    const found: number[] = [];
+    for (let y = 110; y <= height - 110; y += 18) {
+      const blocked = bands.some((band) => y >= band.minY && y <= band.maxY);
+      if (!blocked) found.push(y);
+    }
+    return found;
+  };
+  const courseBands = course.map((segment) => ({
+    minY: Math.min(segment.y1, segment.y2) - STONE_RADIUS * 2,
+    maxY: Math.max(segment.y1, segment.y2) + STONE_RADIUS * 2,
+  }));
+  const safeYs = scanSafeYs(courseBands);
 
   if (safeYs.length === 0) return [];
 
@@ -189,22 +255,45 @@ export function makePortals(level: number, width: number, height: number): Porta
 
   const usableTop = Math.max(94, height * 0.14);
   const usableBottom = height - 116;
-  const pairCount = portalPairCount;
-  const pairs: PortalPair[] = [];
+  const bounds: PlacementBounds = {
+    minX: HOLE_RADIUS + 16,
+    maxX: width - HOLE_RADIUS - 16,
+    minY: usableTop + 50,
+    maxY: usableBottom - 30,
+  };
+  // The ring (18) plus the tooth length (8) must clear every barrier, and portals need room for each other.
+  const SPINE_CLEARANCE = HOLE_RADIUS + 10;
+  const PORTAL_GAP = HOLE_RADIUS * 2 + 22;
+  const fixedBars = [...makeCourse(level, width, height), ...makeBouncyBarriers(level, width, height)];
+  const sweeps = makeMovingBars(level, width, height).map(sweptSegment);
+  const placed: Point[] = [];
+  const scoreFor = (sweepNeed: number) => (candidate: Point) =>
+    Math.min(
+      clearanceTo(candidate, fixedBars) - SPINE_CLEARANCE,
+      sweeps.length > 0 ? clearanceTo(candidate, sweeps) - sweepNeed : Infinity,
+      placed.reduce((nearest, other) => Math.min(nearest, Math.hypot(candidate.x - other.x, candidate.y - other.y)), Infinity) - PORTAL_GAP,
+    );
+  const place = (anchor: Point) => {
+    // Keep clear of fixed bars always; keep clear of the moving bars' sweep as far as the layout allows.
+    const tiers = [SPINE_CLEARANCE, HOLE_RADIUS, -Infinity];
+    let point = anchor;
+    for (const sweepNeed of tiers) {
+      const score = scoreFor(sweepNeed);
+      point = placeNear(anchor, score, bounds);
+      if (score(point) >= 0) break;
+    }
+    placed.push(point);
+    return point;
+  };
 
-  for (let index = 0; index < pairCount; index += 1) {
+  const pairs: PortalPair[] = [];
+  for (let index = 0; index < portalPairCount; index += 1) {
     const yOffset = index * 74;
     pairs.push({
       id: `portal-${level}-${index}`,
       label: String.fromCharCode(65 + index),
-      a: {
-        x: width * (index === 0 ? 0.22 : 0.78),
-        y: usableTop + 100 + yOffset,
-      },
-      b: {
-        x: width * (index === 0 ? 0.78 : 0.22),
-        y: usableBottom - 70 - yOffset,
-      },
+      a: place({ x: width * (index === 0 ? 0.22 : 0.78), y: usableTop + 100 + yOffset }),
+      b: place({ x: width * (index === 0 ? 0.78 : 0.22), y: usableBottom - 70 - yOffset }),
     });
   }
 

@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Feather } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -14,6 +15,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useColors } from '@/hooks/useColors';
+import { BoardArt, LegendGlyph, StoneSprite } from '@/components/BoardArt';
 import { StoryCard } from '@/components/StoryCard';
 import { type CopyKey, L, formatCopy, skinName, t } from '@/lib/i18n';
 import {
@@ -37,6 +39,7 @@ import {
   totalStars,
   touchDay,
 } from '@/lib/progress';
+import { type Palette, STONE_BOX } from '@/lib/boardArt';
 import { loadProgress, saveProgress } from '@/lib/progressStore';
 import { type Chapter, chapterById, chapterForLevel, levelsUntilChapterEnd } from '@/lib/story';
 import { playSound, setSoundEnabled } from '@/lib/sound';
@@ -612,11 +615,6 @@ export default function GameScreen() {
   const chapterFill = chapterLength === null ? 1 : Math.min(1, chapterStep / chapterLength);
   const starsCollected = totalStars(progress);
   const daily = dailyFor(progress, localDate());
-  const gridLines = useMemo(() => {
-    const lines: number[] = [];
-    for (let y = 30; y < board.height; y += 28) lines.push(y);
-    return lines;
-  }, [board.height]);
   const cycleSkin = () => {
     const ids = progress.skins;
     const nextSkin = ids[(ids.indexOf(progress.selectedSkin) + 1) % ids.length] ?? 'coral';
@@ -641,28 +639,16 @@ export default function GameScreen() {
     else if (pageLeft !== null && pageLeft > 1) completionNudges.push(formatCopy('pageLeft', { count: String(pageLeft) }));
   }
   const hitHint = failureHint(level, levelAttempts);
-  const renderTrail = (points: Point[], prefix: string, color: string, alpha: number) =>
-    points.length > 1 && points.slice(1).map((point, index) => {
-      const previous = points[index];
-      const length = Math.hypot(point.x - previous.x, point.y - previous.y);
-      return (
-        <View
-          key={`${prefix}-${index}`}
-          pointerEvents="none"
-          style={[
-            styles.trail,
-            {
-              width: Math.max(2, length),
-              left: previous.x,
-              top: previous.y - 1,
-              opacity: ((index + 1) / points.length) * alpha,
-              backgroundColor: color,
-              transform: [{ rotate: `${Math.atan2(point.y - previous.y, point.x - previous.x)}rad` }],
-            },
-          ]}
-        />
-      );
-    });
+  const artPalette: Palette = {
+    obstacle: colors.obstacle,
+    stone: stoneColor,
+    stoneHighlight: colors.stoneHighlight,
+    goal: colors.goal,
+    gridLine: colors.gridLine,
+    surface: colors.gameSurface,
+    background: colors.gameBackground,
+    border: colors.border,
+  };
 
   return (
     <View style={[styles.screen, { backgroundColor: colors.gameBackground, paddingTop: boardInsetTop }]}>
@@ -765,9 +751,28 @@ export default function GameScreen() {
         }}
         {...responder.panHandlers}
       >
-        {gridLines.map((y) => (
-          <View key={`grid-${y}`} pointerEvents="none" style={[styles.gridLine, { top: y, backgroundColor: colors.gridLine }]} />
-        ))}
+        <LinearGradient
+          pointerEvents="none"
+          colors={[colors.gameSurfaceRaised, colors.gameSurface]}
+          style={StyleSheet.absoluteFill}
+        />
+        <BoardArt
+          width={board.width}
+          height={board.height}
+          palette={artPalette}
+          exitLabel={t('exit')}
+          course={course}
+          bouncy={bouncyBarriers}
+          portals={portals}
+          movingBlueprints={movingBarBlueprints}
+          movingBars={movingBars}
+          goal={goal}
+          origin={origin}
+          stoneColor={stoneColor}
+          trail={trail}
+          ghost={phase === 'moving' ? [] : ghost}
+          aim={phase === 'aiming' ? { from: launchPoint, to: aim } : null}
+        />
         {welcome && (
           <View pointerEvents="none" style={[styles.welcome, { backgroundColor: colors.gameSurfaceRaised, borderColor: chapterAccent }]}>
             <Feather name="sun" size={18} color={colors.stoneHighlight} />
@@ -792,157 +797,8 @@ export default function GameScreen() {
             <Text style={[styles.chapterNumber, { color: colors.mutedForeground }]}>{t('chapter')} {formatLevel(level)}</Text>
           </Animated.View>
         )}
-        <View style={[styles.goal, { left: goal.x - 18, top: goal.y - 18, borderColor: colors.goal }]}>
-        </View>
-        <Text style={[styles.goalText, { left: goal.x - 25, top: goal.y + 25, color: colors.goal }]}>{t('exit')}</Text>
-
-
-        {phase !== 'moving' && renderTrail(ghost, 'ghost', colors.obstacle, 0.34)}
-        {renderTrail(trail, 'trail', stoneColor, 0.42)}
-        {course.map((line, index) => {
-          const length = Math.hypot(line.x2 - line.x1, line.y2 - line.y1);
-          const angle = Math.atan2(line.y2 - line.y1, line.x2 - line.x1);
-          const spikeCount = Math.max(1, Math.floor(length / 22));
-          return (
-            <React.Fragment key={`line-${index}`}>
-              <View
-                style={[
-                  styles.obstacle,
-                  {
-                    backgroundColor: colors.obstacle,
-                    width: length,
-                    left: line.x1,
-                    top: line.y1 - 2,
-                    transform: [{ rotate: `${angle}rad` }],
-                  },
-                ]}
-              />
-              {Array.from({ length: spikeCount }).map((_, spikeIndex) => {
-                const progress = (spikeIndex + 0.5) / spikeCount;
-                return (
-                  <View
-                    key={`line-${index}-spike-${spikeIndex}`}
-                    style={[
-                      styles.spike,
-                      {
-                        borderBottomColor: colors.obstacle,
-                        left: line.x1 + (line.x2 - line.x1) * progress - 5,
-                        top: line.y1 + (line.y2 - line.y1) * progress - 9,
-                        transform: [{ rotate: `${angle}rad` }],
-                      },
-                    ]}
-                  />
-                );
-              })}
-            </React.Fragment>
-          );
-        })}
-        {movingBars.map((line, index) => {
-          const length = Math.hypot(line.x2 - line.x1, line.y2 - line.y1);
-          const angle = Math.atan2(line.y2 - line.y1, line.x2 - line.x1);
-          const spikeCount = Math.max(1, Math.floor(length / 20));
-          return (
-            <React.Fragment key={`moving-line-${movingBarBlueprints[index]?.id ?? index}`}>
-              <View
-                style={[
-                  styles.obstacle,
-                  styles.movingObstacle,
-                  {
-                    backgroundColor: colors.obstacle,
-                    borderColor: colors.stoneHighlight,
-                    width: length,
-                    left: line.x1,
-                    top: line.y1 - 3,
-                    transform: [{ rotate: `${angle}rad` }],
-                  },
-                ]}
-              />
-              {Array.from({ length: spikeCount }).map((_, spikeIndex) => {
-                const progress = (spikeIndex + 0.5) / spikeCount;
-                return (
-                  <View
-                    key={`moving-line-${index}-spike-${spikeIndex}`}
-                    style={[
-                      styles.spike,
-                      {
-                        borderBottomColor: colors.stoneHighlight,
-                        left: line.x1 + (line.x2 - line.x1) * progress - 5,
-                        top: line.y1 + (line.y2 - line.y1) * progress - 9,
-                        transform: [{ rotate: `${angle}rad` }],
-                      },
-                    ]}
-                  />
-                );
-              })}
-            </React.Fragment>
-          );
-        })}
-
-        {bouncyBarriers.map((line, index) => {
-          const length = Math.hypot(line.x2 - line.x1, line.y2 - line.y1);
-          const angle = Math.atan2(line.y2 - line.y1, line.x2 - line.x1);
-          return (
-            <React.Fragment key={`bouncy-line-${index}`}>
-              <View
-                style={[
-                  styles.obstacle,
-                  styles.bouncyObstacle,
-                  {
-                    backgroundColor: colors.goal,
-                    borderColor: colors.stoneHighlight,
-                    width: length,
-                    left: line.x1,
-                    top: line.y1 - 4,
-                    transform: [{ rotate: `${angle}rad` }],
-                  },
-                ]}
-              />
-              <Feather
-                name="chevrons-left"
-                size={16}
-                color={colors.gameBackground}
-                style={{ position: 'absolute', left: line.x1 + length / 2 - 8, top: line.y1 - 8, transform: [{ rotate: `${angle}rad` }] }}
-              />
-            </React.Fragment>
-          );
-        })}
-
-        {portals.map((portal) => (
-          <React.Fragment key={portal.id}>
-            {[{ point: portal.a, side: 'a' }, { point: portal.b, side: 'b' }].map(({ point, side }) => (
-              <View
-                key={`${portal.id}-${side}`}
-                style={[
-                  styles.hole,
-                  {
-                    left: point.x - HOLE_RADIUS,
-                    top: point.y - HOLE_RADIUS,
-                    borderColor: colors.stoneHighlight,
-                    backgroundColor: `${colors.gameBackground}D9`,
-                  },
-                ]}
-              >
-                <Text style={[styles.holeLabel, { color: colors.stoneHighlight }]}>{portal.label}</Text>
-              </View>
-            ))}
-          </React.Fragment>
-        ))}
-
         {phase === 'aiming' && (
           <>
-            <View
-              style={[
-                styles.aimGuide,
-                {
-                  backgroundColor: colors.stoneHighlight,
-                  width: Math.max(1, Math.hypot(aim.x - launchPoint.x, aim.y - launchPoint.y)),
-                  left: launchPoint.x,
-                  top: launchPoint.y - 1,
-                  transform: [{ rotate: `${Math.atan2(aim.y - launchPoint.y, aim.x - launchPoint.x)}rad` }],
-                  opacity: 0.36 + aimProgress * 0.5,
-                },
-              ]}
-            />
             <View
               pointerEvents="none"
               style={[
@@ -1012,11 +868,14 @@ export default function GameScreen() {
         )}
 
         <Animated.View
+          pointerEvents="none"
           style={[
             styles.stone,
-            { left: stone.x - STONE_RADIUS, top: stone.y - STONE_RADIUS, backgroundColor: stoneColor, transform: [{ scale: pulse }] },
+            { left: stone.x - STONE_BOX / 2, top: stone.y - STONE_BOX / 2, transform: [{ scale: pulse }] },
           ]}
-        />
+        >
+          <StoneSprite color={stoneColor} />
+        </Animated.View>
 
         {burstPoint && (
           <Animated.View
@@ -1201,32 +1060,31 @@ export default function GameScreen() {
 
       <View style={styles.footer}>
         <View style={styles.legend}>
-          <Feather name="minus" size={14} color={colors.obstacle} />
-          <Text style={[styles.legendText, { color: colors.mutedForeground }]}>{t('obstacle')}</Text>
-          <Feather name="flag" size={12} color={colors.goal} />
-          <Text style={[styles.legendText, { color: colors.mutedForeground }]}>{t('goal')}</Text>
-          {movingBars.length > 0 && (
-            <>
-              <Feather name="move" size={12} color={colors.stone} />
-              <Text style={[styles.legendText, { color: colors.mutedForeground }]}>{t('movingObstacle')}</Text>
-            </>
-          )}
-          {portals.length > 0 && (
-            <>
-              <Feather name="corner-up-left" size={12} color={colors.stoneHighlight} />
-              <Text style={[styles.legendText, { color: colors.mutedForeground }]}>{t('portal')}</Text>
-            </>
-          )}
+          {([
+            ['thorn', t('obstacle'), true],
+            ['exit', t('goal'), true],
+            ['moving', t('movingObstacle'), movingBars.length > 0],
+            ['bouncy', t('bouncer'), bouncyBarriers.length > 0],
+            ['portal', t('portal'), portals.length > 0],
+          ] as const)
+            .filter(([, , visible]) => visible)
+            .map(([kind, label]) => (
+              <View key={kind} style={styles.legendItem}>
+                <LegendGlyph kind={kind} palette={artPalette} />
+                <Text style={[styles.legendText, { color: colors.mutedForeground }]}>{label}</Text>
+              </View>
+            ))}
         </View>
         {progress.skins.length > 1 && (
-          <Pressable onPress={cycleSkin} style={styles.skinButton} accessibilityRole="button">
-            <Feather name="droplet" size={12} color={stoneColor} />
+          <Pressable
+            onPress={cycleSkin}
+            style={[styles.skinButton, { borderColor: colors.border, backgroundColor: colors.gameSurface }]}
+            accessibilityRole="button"
+          >
+            <View style={[styles.skinDot, { backgroundColor: stoneColor }]} />
             <Text style={[styles.legendText, { color: colors.mutedForeground }]}>{t('style')}</Text>
           </Pressable>
         )}
-        <Text style={[styles.footerHint, { color: colors.mutedForeground }]}>
-          {portals.length > 0 ? t('portal') : movingBars.length > 0 ? t('movingObstacle') : t('drag')}
-        </Text>
       </View>
     </View>
   );
@@ -1264,19 +1122,9 @@ const styles = StyleSheet.create({
   chapterKicker: { fontSize: 9, fontWeight: '800', letterSpacing: 2, marginTop: 8 },
   chapterTitle: { fontSize: 23, fontWeight: '800', marginTop: 5 },
   chapterNumber: { fontSize: 10, fontWeight: '700', letterSpacing: 1.5, marginTop: 5 },
-  goal: { width: 38, height: 38, borderRadius: 19, borderWidth: 3, position: 'absolute', alignItems: 'center', justifyContent: 'center' },
-  goalText: { position: 'absolute', fontSize: 9, letterSpacing: 1.1, fontWeight: '800' },
-  obstacle: { height: 5, position: 'absolute', borderRadius: 3, transformOrigin: 'left center' },
-  movingObstacle: { height: 7, borderWidth: 1 },
-  bouncyObstacle: { height: 9, borderWidth: 2, borderRadius: 5 },
-  spike: { width: 0, height: 0, borderLeftWidth: 5, borderRightWidth: 5, borderBottomWidth: 9, borderLeftColor: 'transparent', borderRightColor: 'transparent', position: 'absolute' },
-  stone: { width: STONE_RADIUS * 2, height: STONE_RADIUS * 2, borderRadius: STONE_RADIUS, position: 'absolute', alignItems: 'center', justifyContent: 'center', shadowColor: '#000', shadowOpacity: 0.34, shadowRadius: 8, shadowOffset: { width: 0, height: 4 }, elevation: 6 },
-  trail: { height: 2, position: 'absolute', borderRadius: 2, transformOrigin: 'left center' },
+  stone: { position: 'absolute', width: STONE_BOX, height: STONE_BOX },
   burst: { position: 'absolute', width: 1, height: 1, zIndex: 10 },
   burstBubble: { position: 'absolute', borderWidth: 2 },
-  hole: { width: HOLE_RADIUS * 2, height: HOLE_RADIUS * 2, position: 'absolute', borderRadius: HOLE_RADIUS, borderWidth: 2, alignItems: 'center', justifyContent: 'center' },
-  holeLabel: { position: 'absolute', top: 1, right: 5, fontSize: 8, fontWeight: '700' },
-  aimGuide: { height: 2, position: 'absolute', transformOrigin: 'left center', borderRadius: 2 },
   aimPad: { width: AIM_PAD_SIZE, height: AIM_PAD_SIZE, position: 'absolute', borderRadius: AIM_PAD_SIZE / 2, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
   aimPadRing: { position: 'absolute', width: 72, height: 72, borderRadius: 36, borderWidth: 1, opacity: 0.45 },
   aimKnob: { width: 32, height: 32, borderRadius: 16, position: 'absolute', alignItems: 'center', justifyContent: 'center' },
@@ -1303,12 +1151,12 @@ const styles = StyleSheet.create({
   secondaryActionText: { fontSize: 11, fontWeight: '700' },
   resultButton: { marginTop: 16, borderRadius: 13, paddingVertical: 12, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center', gap: 8 },
   resultButtonText: { fontSize: 13, fontWeight: '700' },
-  footer: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingTop: 11, paddingBottom: 10 },
-  legend: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  footer: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingTop: 11, paddingBottom: 10, gap: 10 },
+  legend: { flex: 1, flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 12, rowGap: 6 },
+  legendItem: { flexDirection: 'row', alignItems: 'center', gap: 3 },
+  skinDot: { width: 12, height: 12, borderRadius: 6 },
   skinButton: { flexDirection: 'row', alignItems: 'center', gap: 4, marginLeft: 8 },
   legendText: { fontSize: 10, fontWeight: '600' },
-  footerHint: { fontSize: 10, textAlign: 'right', flexShrink: 1, marginLeft: 10 },
-  gridLine: { position: 'absolute', left: 0, right: 0, height: 1, opacity: 0.55 },
   welcome: { position: 'absolute', zIndex: 25, top: 12, left: 12, right: 12, flexDirection: 'row', alignItems: 'center', gap: 10, borderRadius: 14, borderWidth: 1, paddingVertical: 10, paddingHorizontal: 13 },
   welcomeCopy: { flex: 1 },
   welcomeTitle: { fontSize: 13, fontWeight: '800' },
