@@ -14,14 +14,40 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useColors } from '@/hooks/useColors';
-import { formatCopy, chapterName as localizedChapterName, t } from '@/lib/i18n';
+import { StoryCard } from '@/components/StoryCard';
+import { type CopyKey, L, formatCopy, skinName, t } from '@/lib/i18n';
+import {
+  DAILY_BONUS_INK,
+  DAILY_TARGET,
+  type ClearResult,
+  type Progress,
+  REVIVE_COST,
+  type Skin,
+  applyClear,
+  dailyFor,
+  defaultProgress,
+  hasSeenStory,
+  localDate,
+  markStorySeen,
+  nextSkinGoal,
+  selectSkin,
+  setCurrentLevel,
+  skinColor,
+  spendInk,
+  totalStars,
+  touchDay,
+} from '@/lib/progress';
+import { loadProgress, saveProgress } from '@/lib/progressStore';
+import { type Chapter, chapterById, chapterForLevel, levelsUntilChapterEnd } from '@/lib/story';
 import { playSound, setSoundEnabled } from '@/lib/sound';
 import {
   HOLE_RADIUS,
   STONE_RADIUS,
   bounceFromBarriers,
+  type LifeLossResult,
   clamp,
   distanceToSegment,
+  getDifficultyProfile,
   makeCourse,
   makeBouncyBarriers,
   makeMovingBars,
@@ -32,18 +58,10 @@ import {
 } from '@/game-logic';
 
 type Point = { x: number; y: number };
-type Phase = 'aiming' | 'moving' | 'hit' | 'complete' | 'demoted' | 'gameover';
-type Completion = { stars: number; medal: string; score: number; riskBonus: number };
+type Phase = 'aiming' | 'moving' | 'hit' | 'complete' | 'demoted' | 'gameover' | 'revive';
+type Completion = ClearResult & { medal: string; riskBonus: number };
+type StoryState = { kind: 'open' | 'end'; chapter: Chapter };
 
-const BEST_LEVEL_KEY = '@cizgi-kacis/best-level';
-const LEVEL_STARS_KEY = '@cizgi-kacis/level-stars';
-const STREAK_KEY = '@cizgi-kacis/streak';
-const DAILY_PROGRESS_KEY = '@cizgi-kacis/daily-progress';
-const DAILY_DATE_KEY = '@cizgi-kacis/daily-date';
-const SKINS_KEY = '@cizgi-kacis/stone-skins';
-const SELECTED_SKIN_KEY = '@cizgi-kacis/selected-skin';
-const BEST_SCORE_KEY = '@cizgi-kacis/best-score';
-const SCORE_HISTORY_KEY = '@cizgi-kacis/score-history';
 const SOUND_ENABLED_KEY = '@cizgi-kacis/sound-enabled';
 const LEVEL_LIVES = 3;
 const MAX_DRAG = 94;
@@ -55,50 +73,50 @@ function formatLevel(level: number) {
   return String(level).padStart(2, '0');
 }
 
-function starsForAttempts(attempts: number) {
-  if (attempts === 0) return 3;
-  if (attempts <= 2) return 2;
-  return 1;
-}
-
-function readJson<T>(value: string | null, fallback: T): T {
-  if (!value) return fallback;
-  try {
-    return JSON.parse(value) as T;
-  } catch {
-    return fallback;
+function skinNudge(goal: { skin: Skin; current: number; target: number }) {
+  const name = skinName(goal.skin.id);
+  const count = String(goal.target - goal.current);
+  const requirement = goal.skin.requirement;
+  if (requirement.type === 'stars') return formatCopy('nudgeStars', { name, count });
+  if (requirement.type === 'perfect') return formatCopy('nudgePerfect', { name, count });
+  if (requirement.type === 'dayStreak') return formatCopy('nudgeDays', { name, count });
+  if (requirement.type === 'chapter') {
+    const chapter = chapterById(requirement.chapterId);
+    return formatCopy('nudgeChapter', { name, chapter: chapter ? L(chapter.name) : '' });
   }
+  return null;
 }
 
-function chapterForLevel(level: number) {
-  return localizedChapterName(level);
-}
-
-function scoreForLevel(level: number, attempts: number, riskBonus: number) {
-  return Math.max(100, level * 100 + Math.max(0, 300 - attempts * 90) + riskBonus);
+/** After two failed shots on the same level, rotate through tips that match what is on screen. */
+function failureHint(level: number, failures: number): string | null {
+  if (failures < 2) return null;
+  const profile = getDifficultyProfile(level);
+  const keys: CopyKey[] = ['hintGeneric'];
+  if (profile.movingBarCount > 0) keys.push('hintMoving');
+  if (profile.portalPairCount > 0) keys.push('hintPortal');
+  if (profile.bouncyBarrierCount > 0) keys.push('hintBouncy');
+  return t(keys[(failures - 2) % keys.length]);
 }
 
 export default function GameScreen() {
   const colors = useColors();
   const router = useRouter();
-  const { level: routeLevel } = useLocalSearchParams<{ level?: string }>();
+  const { level: routeLevel, t: routeStamp } = useLocalSearchParams<{ level?: string; t?: string }>();
   const insets = useSafeAreaInsets();
   const [board, setBoard] = useState({ width: Dimensions.get('window').width - 32, height: 480 });
   const [level, setLevel] = useState(1);
-  const [bestLevel, setBestLevel] = useState(1);
-  const [bestScore, setBestScore] = useState(0);
   const [runScore, setRunScore] = useState(0);
   const [soundEnabled, setSoundEnabledState] = useState(true);
-  const [attempts, setAttempts] = useState(0);
+  const [, setAttempts] = useState(0);
   const [levelAttempts, setLevelAttempts] = useState(0);
   const [lives, setLives] = useState(LEVEL_LIVES);
-  const [levelStars, setLevelStars] = useState<Record<string, number>>({});
-  const [streak, setStreak] = useState(0);
-  const [dailyProgress, setDailyProgress] = useState(0);
   const [completion, setCompletion] = useState<Completion | null>(null);
   const [riskBonus, setRiskBonus] = useState(0);
-  const [stoneSkin, setStoneSkin] = useState('coral');
-  const [unlockedSkins, setUnlockedSkins] = useState<string[]>(['coral']);
+  const [progress, setProgress] = useState<Progress>(defaultProgress);
+  const [loaded, setLoaded] = useState(false);
+  const [storyCard, setStoryCard] = useState<StoryState | null>(null);
+  const [welcome, setWelcome] = useState<{ streak: number; broken: boolean } | null>(null);
+  const [ghost, setGhost] = useState<Point[]>([]);
   const [phase, setPhase] = useState<Phase>('aiming');
   const [stone, setStone] = useState<Point>({ x: board.width / 2, y: board.height - 57 });
   const [aim, setAim] = useState<Point>({ x: board.width / 2, y: board.height - 132 });
@@ -111,7 +129,11 @@ export default function GameScreen() {
   const [flash, setFlash] = useState(false);
   const [burstPoint, setBurstPoint] = useState<Point | null>(null);
   const [trail, setTrail] = useState<Point[]>([]);
-  const [showIntro, setShowIntro] = useState(true);
+  const [showIntro, setShowIntro] = useState(false);
+  const progressRef = useRef<Progress>(progress);
+  const pendingLossRef = useRef<LifeLossResult | null>(null);
+  const trailRef = useRef<Point[]>([]);
+  const appliedRouteRef = useRef<string | null>(null);
   const stoneRef = useRef(stone);
   const velocityRef = useRef(velocity);
   const phaseRef = useRef(phase);
@@ -127,6 +149,12 @@ export default function GameScreen() {
   const burstOpacity = useRef(new Animated.Value(1)).current;
   const introOpacity = useRef(new Animated.Value(0)).current;
   const introScale = useRef(new Animated.Value(0.94)).current;
+
+  const commit = useCallback((next: Progress) => {
+    progressRef.current = next;
+    setProgress(next);
+    void saveProgress(next);
+  }, []);
 
   const course = useMemo(() => makeCourse(level, board.width, board.height), [level, board.height, board.width]);
   const bouncyBarriers = useMemo(() => makeBouncyBarriers(level, board.width, board.height), [level, board.height, board.width]);
@@ -145,15 +173,32 @@ export default function GameScreen() {
   const launchPointRef = useRef(launchPoint);
 
   const chapter = chapterForLevel(level);
+  const chapterTitle = L(chapter.name);
 
   useEffect(() => {
+    if (!loaded) return;
+    const stamp = `${routeLevel ?? ''}:${routeStamp ?? ''}`;
+    if (appliedRouteRef.current === stamp) return;
+    appliedRouteRef.current = stamp;
     const requestedLevel = Number(routeLevel);
-    if (Number.isInteger(requestedLevel) && requestedLevel > 0 && requestedLevel <= bestLevel) {
+    if (Number.isInteger(requestedLevel) && requestedLevel > 0 && requestedLevel <= progressRef.current.bestLevel) {
       setLevel(requestedLevel);
+      setLives(LEVEL_LIVES);
+      setLevelAttempts(0);
+      setCompletion(null);
+      setGhost([]);
+      commit(setCurrentLevel(progressRef.current, requestedLevel));
     }
-  }, [bestLevel, routeLevel]);
+  }, [commit, loaded, routeLevel, routeStamp]);
 
   useEffect(() => {
+    if (!loaded) return;
+    const current = chapterForLevel(level);
+    if (level === current.start && !hasSeenStory(progressRef.current, 'open', current.id)) {
+      setShowIntro(false);
+      setStoryCard({ kind: 'open', chapter: current });
+      return;
+    }
     setShowIntro(true);
     introOpacity.setValue(0);
     introScale.setValue(0.94);
@@ -163,7 +208,7 @@ export default function GameScreen() {
     ]).start();
     const timer = setTimeout(() => setShowIntro(false), 950);
     return () => clearTimeout(timer);
-  }, [introOpacity, introScale, level]);
+  }, [introOpacity, introScale, level, loaded]);
 
   useEffect(() => {
     stoneRef.current = stone;
@@ -182,34 +227,36 @@ export default function GameScreen() {
   }, [launchPoint]);
 
   useEffect(() => {
-    Promise.all([
-      AsyncStorage.getItem(BEST_LEVEL_KEY),
-      AsyncStorage.getItem(LEVEL_STARS_KEY),
-      AsyncStorage.getItem(STREAK_KEY),
-      AsyncStorage.getItem(DAILY_PROGRESS_KEY),
-      AsyncStorage.getItem(DAILY_DATE_KEY),
-      AsyncStorage.getItem(SKINS_KEY),
-      AsyncStorage.getItem(SELECTED_SKIN_KEY),
-      AsyncStorage.getItem(BEST_SCORE_KEY),
-      AsyncStorage.getItem(SOUND_ENABLED_KEY),
-    ]).then(([storedBest, storedStars, storedStreak, storedDaily, storedDailyDate, storedSkins, storedSelectedSkin, storedBestScore, storedSound]) => {
-      if (storedBest) setBestLevel(Math.max(1, Number(storedBest)));
-      setBestScore(Math.max(0, Number(storedBestScore ?? 0)));
+    trailRef.current = trail;
+  }, [trail]);
+
+  useEffect(() => {
+    if (!welcome) return;
+    const timer = setTimeout(() => setWelcome(null), 3600);
+    return () => clearTimeout(timer);
+  }, [welcome]);
+
+  useEffect(() => {
+    let active = true;
+    Promise.all([loadProgress(), AsyncStorage.getItem(SOUND_ENABLED_KEY)]).then(([stored, storedSound]) => {
+      if (!active) return;
       const enabled = storedSound !== 'false';
       setSoundEnabledState(enabled);
       setSoundEnabled(enabled);
-      setLevelStars(readJson<Record<string, number>>(storedStars, {}));
-      setStreak(Math.max(0, Number(storedStreak ?? 0)));
-      const today = new Date().toISOString().slice(0, 10);
-      const isToday = storedDailyDate === today;
-      const savedSkins = readJson<string[]>(storedSkins, ['coral']);
-      setDailyProgress(isToday ? Math.min(3, Math.max(0, Number(storedDaily ?? 0))) : 0);
-      setUnlockedSkins(savedSkins.includes('coral') ? savedSkins : ['coral', ...savedSkins]);
-      setStoneSkin(storedSelectedSkin && savedSkins.includes(storedSelectedSkin) ? storedSelectedSkin : savedSkins[0] ?? 'coral');
-      if (!isToday) {
-        void AsyncStorage.multiSet([[DAILY_DATE_KEY, today], [DAILY_PROGRESS_KEY, '0']]);
+      const touched = touchDay(stored, localDate());
+      commit(touched.progress);
+      if (!Number.isInteger(Number(routeLevel)) || Number(routeLevel) < 1) {
+        setLevel(touched.progress.currentLevel);
       }
+      if (touched.firstVisitToday && stored.lastPlayedDate !== null) {
+        setWelcome({ streak: touched.progress.dayStreak, broken: touched.streakBroken });
+      }
+      setLoaded(true);
     });
+    return () => {
+      active = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const resetStone = useCallback(() => {
@@ -236,6 +283,20 @@ export default function GameScreen() {
     setPhase(next);
   }, []);
 
+  const applyLoss = useCallback((loss: LifeLossResult) => {
+    setLives(loss.lives);
+    if (loss.outcome === 'demoted') {
+      setLevel(loss.level);
+      setLevelAttempts(0);
+      setGhost([]);
+      resetStone();
+      commit(setCurrentLevel(progressRef.current, loss.level));
+      setGamePhase('demoted');
+    } else {
+      setGamePhase('gameover');
+    }
+  }, [commit, resetStone, setGamePhase]);
+
   const finishAttempt = useCallback(async (success: boolean, impactPoint?: Point) => {
     setGamePhase(success ? 'complete' : 'hit');
     setFlash(true);
@@ -255,58 +316,37 @@ export default function GameScreen() {
       success ? Haptics.NotificationFeedbackType.Success : Haptics.NotificationFeedbackType.Error,
     );
     if (!success) {
-      const nextLevelAttempts = levelAttempts + 1;
       const lifeLoss = resolveLifeLoss(level, lives, LEVEL_LIVES);
       setAttempts((current) => current + 1);
-      setLevelAttempts(nextLevelAttempts);
-      setLives(lifeLoss.lives);
-
+      setLevelAttempts(levelAttempts + 1);
+      setGhost(trailRef.current);
       if (lifeLoss.outcome === 'retry') {
+        setLives(lifeLoss.lives);
         resetStone();
-      } else if (lifeLoss.outcome === 'demoted') {
-        setLevel(lifeLoss.level);
-        setLevelAttempts(0);
-        resetStone();
-        setGamePhase('demoted');
+      } else if (progressRef.current.ink >= REVIVE_COST) {
+        // Instead of punishing the player right away, offer to spend ink for one more life.
+        pendingLossRef.current = lifeLoss;
+        setLives(0);
+        setGamePhase('revive');
       } else {
-        setGamePhase('gameover');
+        applyLoss(lifeLoss);
       }
     } else {
       void playSound('success');
-      const stars = starsForAttempts(levelAttempts);
-      const medal = levelAttempts === 0 ? 'Kusursuz atış' : stars === 2 ? 'Temiz geçiş' : 'Bölüm tamamlandı';
-      const score = scoreForLevel(level, levelAttempts, riskBonusRef.current);
-      const nextBestScore = Math.max(bestScore, score);
-      setRunScore((current) => current + score);
-      const nextStars = { ...levelStars, [String(level)]: Math.max(levelStars[String(level)] ?? 0, stars) };
-      const nextStreak = streak + 1;
-      const nextDailyProgress = Math.min(3, dailyProgress + 1);
-      const nextSkins = Array.from(new Set([
-        ...unlockedSkins,
-        ...(nextStreak >= 3 ? ['mint'] : []),
-        ...(nextStreak >= 6 ? ['gold'] : []),
-      ]));
-      setCompletion({ stars, medal, score, riskBonus: riskBonusRef.current });
-      setBestScore(nextBestScore);
-      setLevelStars(nextStars);
-      setStreak(nextStreak);
-      setDailyProgress(nextDailyProgress);
-      setUnlockedSkins(nextSkins);
-      const storedHistory = await AsyncStorage.getItem(SCORE_HISTORY_KEY);
-      const scoreHistory = readJson<Array<{ level: number; score: number; stars: number; date: string }>>(storedHistory, []);
-      scoreHistory.push({ level, score, stars, date: new Date().toISOString().slice(0, 10) });
-      const topScores = scoreHistory.sort((left, right) => right.score - left.score).slice(0, 20);
-      await Promise.all([
-        AsyncStorage.setItem(LEVEL_STARS_KEY, JSON.stringify(nextStars)),
-        AsyncStorage.setItem(STREAK_KEY, String(nextStreak)),
-        AsyncStorage.setItem(DAILY_PROGRESS_KEY, String(nextDailyProgress)),
-        AsyncStorage.setItem(SKINS_KEY, JSON.stringify(nextSkins)),
-        AsyncStorage.setItem(BEST_SCORE_KEY, String(nextBestScore)),
-        AsyncStorage.setItem(SCORE_HISTORY_KEY, JSON.stringify(topScores)),
-      ]);
+      const { progress: nextProgress, result } = applyClear(progressRef.current, {
+        level,
+        failedAttempts: levelAttempts,
+        riskBonus: riskBonusRef.current,
+        today: localDate(),
+      });
+      const medal = result.stars === 3 ? t('medalPerfect') : result.stars === 2 ? t('medalClean') : t('medalDone');
+      setRunScore((current) => current + result.score);
+      setCompletion({ ...result, medal, riskBonus: riskBonusRef.current });
+      setGhost([]);
+      commit(nextProgress);
     }
     setTimeout(() => setFlash(false), 260);
-  }, [bestScore, burstOpacity, burstScale, dailyProgress, level, levelAttempts, levelStars, lives, resetStone, setGamePhase, streak, unlockedSkins]);
+  }, [applyLoss, burstOpacity, burstScale, commit, level, levelAttempts, lives, resetStone, setGamePhase]);
 
   useEffect(() => {
     if (phase !== 'moving') {
@@ -479,8 +519,8 @@ export default function GameScreen() {
   }, [board.height, board.width]);
 
   const responder = useMemo(() => PanResponder.create({
-    onStartShouldSetPanResponder: () => phaseRef.current === 'aiming' && !showIntro,
-    onMoveShouldSetPanResponder: () => phaseRef.current === 'aiming' && !showIntro,
+    onStartShouldSetPanResponder: () => phaseRef.current === 'aiming' && !showIntro && !storyCard,
+    onMoveShouldSetPanResponder: () => phaseRef.current === 'aiming' && !showIntro && !storyCard,
     onPanResponderGrant: (event) => {
       if (phaseRef.current === 'aiming') {
         startAim(event.nativeEvent.locationX, event.nativeEvent.locationY);
@@ -493,22 +533,52 @@ export default function GameScreen() {
     },
     onPanResponderRelease: launch,
     onPanResponderTerminate: launch,
-  }), [launch, showIntro, startAim, updateJoystick]);
+  }), [launch, showIntro, startAim, storyCard, updateJoystick]);
 
-  const nextLevel = useCallback(async () => {
+  const advanceLevel = useCallback(async () => {
     const next = level + 1;
     setLevel(next);
     setLives(LEVEL_LIVES);
-    if (next > bestLevel) {
-      setBestLevel(next);
-      await AsyncStorage.setItem(BEST_LEVEL_KEY, String(next));
-    }
     setLevelAttempts(0);
     setCompletion(null);
+    setGhost([]);
+    commit(setCurrentLevel(progressRef.current, next));
     resetStone();
     setGamePhase('aiming');
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-  }, [bestLevel, level, resetStone, setGamePhase]);
+  }, [commit, level, resetStone, setGamePhase]);
+
+  const nextLevel = useCallback(async () => {
+    const finished = completion?.chapterCompleted;
+    if (finished?.ending && !hasSeenStory(progressRef.current, 'end', finished.id)) {
+      setStoryCard({ kind: 'end', chapter: finished });
+      return;
+    }
+    await advanceLevel();
+  }, [advanceLevel, completion]);
+
+  const dismissStory = useCallback(() => {
+    if (!storyCard) return;
+    commit(markStorySeen(progressRef.current, storyCard.kind, storyCard.chapter.id));
+    setStoryCard(null);
+    if (storyCard.kind === 'end') void advanceLevel();
+  }, [advanceLevel, commit, storyCard]);
+
+  const revive = useCallback(() => {
+    const paid = spendInk(progressRef.current, REVIVE_COST);
+    if (!paid) return;
+    commit(paid);
+    pendingLossRef.current = null;
+    setLives(1);
+    resetStone();
+    setGamePhase('aiming');
+  }, [commit, resetStone, setGamePhase]);
+
+  const declineRevive = useCallback(() => {
+    const loss = pendingLossRef.current;
+    pendingLossRef.current = null;
+    if (loss) applyLoss(loss);
+  }, [applyLoss]);
 
   const retry = useCallback(() => {
     resetStone();
@@ -526,23 +596,31 @@ export default function GameScreen() {
     setAttempts(0);
     setRunScore(0);
     setCompletion(null);
+    setGhost([]);
+    commit(setCurrentLevel(progressRef.current, 1));
     setShowHelp(true);
     resetStone();
     setGamePhase('aiming');
-  }, [resetStone, setGamePhase]);
+  }, [commit, resetStone, setGamePhase]);
 
-  const progress = clamp(Math.hypot(aim.x - launchPoint.x, aim.y - launchPoint.y) / MAX_DRAG, 0, 1);
+  const aimProgress = clamp(Math.hypot(aim.x - launchPoint.x, aim.y - launchPoint.y) / MAX_DRAG, 0, 1);
   const boardInsetTop = Math.max(18, insets.top * 0.18);
-  const stoneColor = stoneSkin === 'mint' ? colors.goal : stoneSkin === 'gold' ? colors.stoneHighlight : colors.stone;
-  const chapterAccent = level >= 9 ? colors.stoneHighlight : level >= 5 ? colors.goal : colors.obstacle;
-  const chapterStart = level >= 9 ? 9 : level >= 5 ? 5 : level >= 3 ? 3 : 1;
-  const chapterProgress = Math.min(4, Math.max(1, level - chapterStart + 1));
-  const starsCollected = Object.values(levelStars).reduce((total, stars) => total + stars, 0);
+  const stoneColor = skinColor(progress.selectedSkin);
+  const chapterAccent = colors[chapter.accent];
+  const chapterLength = chapter.end === null ? null : chapter.end - chapter.start + 1;
+  const chapterStep = Math.max(1, level - chapter.start + 1);
+  const chapterFill = chapterLength === null ? 1 : Math.min(1, chapterStep / chapterLength);
+  const starsCollected = totalStars(progress);
+  const daily = dailyFor(progress, localDate());
+  const gridLines = useMemo(() => {
+    const lines: number[] = [];
+    for (let y = 30; y < board.height; y += 28) lines.push(y);
+    return lines;
+  }, [board.height]);
   const cycleSkin = () => {
-    const currentIndex = unlockedSkins.indexOf(stoneSkin);
-    const nextSkin = unlockedSkins[(currentIndex + 1) % unlockedSkins.length] ?? 'coral';
-    setStoneSkin(nextSkin);
-    void AsyncStorage.setItem(SELECTED_SKIN_KEY, nextSkin);
+    const ids = progress.skins;
+    const nextSkin = ids[(ids.indexOf(progress.selectedSkin) + 1) % ids.length] ?? 'coral';
+    commit(selectSkin(progressRef.current, nextSkin));
   };
   const toggleSound = () => {
     const nextEnabled = !soundEnabled;
@@ -550,6 +628,41 @@ export default function GameScreen() {
     setSoundEnabled(nextEnabled);
     void AsyncStorage.setItem(SOUND_ENABLED_KEY, String(nextEnabled));
   };
+  const skinGoal = nextSkinGoal(progress);
+  const pageLeft = levelsUntilChapterEnd(level);
+  const completionNudges: string[] = [];
+  if (completion) {
+    if (completion.stars < 3) completionNudges.push(formatCopy('moreStars', { count: String(3 - completion.stars) }));
+    else if (skinGoal) {
+      const nudge = skinNudge(skinGoal);
+      if (nudge) completionNudges.push(nudge);
+    }
+    if (pageLeft === 1) completionNudges.push(t('pageLast'));
+    else if (pageLeft !== null && pageLeft > 1) completionNudges.push(formatCopy('pageLeft', { count: String(pageLeft) }));
+  }
+  const hitHint = failureHint(level, levelAttempts);
+  const renderTrail = (points: Point[], prefix: string, color: string, alpha: number) =>
+    points.length > 1 && points.slice(1).map((point, index) => {
+      const previous = points[index];
+      const length = Math.hypot(point.x - previous.x, point.y - previous.y);
+      return (
+        <View
+          key={`${prefix}-${index}`}
+          pointerEvents="none"
+          style={[
+            styles.trail,
+            {
+              width: Math.max(2, length),
+              left: previous.x,
+              top: previous.y - 1,
+              opacity: ((index + 1) / points.length) * alpha,
+              backgroundColor: color,
+              transform: [{ rotate: `${Math.atan2(point.y - previous.y, point.x - previous.x)}rad` }],
+            },
+          ]}
+        />
+      );
+    });
 
   return (
     <View style={[styles.screen, { backgroundColor: colors.gameBackground, paddingTop: boardInsetTop }]}>
@@ -562,11 +675,11 @@ export default function GameScreen() {
           <Text style={[styles.title, { color: colors.ink }]}>{t('title')}</Text>
         </View>
         <View style={styles.headerActions}>
-          <Pressable onPress={() => router.push('/map')} style={styles.headerIcon} accessibilityLabel="Bölüm haritası">
+          <Pressable onPress={() => router.push('/map')} style={styles.headerIcon} accessibilityLabel={t('map')}>
             <Feather name="map" size={16} color={colors.ink} />
           </Pressable>
-          <Pressable onPress={() => router.push('/leaderboard')} style={styles.headerIcon} accessibilityLabel="Skor tablosu">
-            <Feather name="bar-chart-2" size={16} color={colors.ink} />
+          <Pressable onPress={() => router.push('/journal')} style={styles.headerIcon} accessibilityLabel={t('journal')}>
+            <Feather name="book-open" size={16} color={colors.ink} />
           </Pressable>
           <Pressable onPress={toggleSound} style={styles.headerIcon} accessibilityLabel={soundEnabled ? t('soundOn') : t('soundOff')}>
             <Feather name={soundEnabled ? 'volume-2' : 'volume-x'} size={16} color={soundEnabled ? colors.stoneHighlight : colors.mutedForeground} />
@@ -580,20 +693,16 @@ export default function GameScreen() {
 
       <View style={styles.statsRow}>
         <View style={styles.stat}>
-          <Feather name="target" size={15} color={colors.stone} />
-          <Text style={[styles.statText, { color: colors.ink }]}>{attempts} {t('attempts')}</Text>
-        </View>
-        <View style={styles.stat}>
-          <Feather name="award" size={15} color={colors.goal} />
-          <Text style={[styles.statText, { color: colors.ink }]}>{t('best')} {formatLevel(bestLevel)}</Text>
+          <Feather name="droplet" size={14} color={colors.goal} />
+          <Text style={[styles.statText, { color: colors.ink }]}>{progress.ink} {t('ink')}</Text>
         </View>
         <View style={styles.stat}>
           <Feather name="zap" size={14} color={colors.stoneHighlight} />
-          <Text style={[styles.statText, { color: colors.ink }]}>{streak} {t('streak')}</Text>
+          <Text style={[styles.statText, { color: colors.ink }]}>{progress.dayStreak} {t('dayUnit')}</Text>
         </View>
         <View style={styles.stat}>
-          <Feather name="bar-chart-2" size={14} color={chapterAccent} />
-          <Text style={[styles.statText, { color: colors.ink }]}>{bestScore} {t('score')}</Text>
+          <Feather name="star" size={14} color={colors.stoneHighlight} />
+          <Text style={[styles.statText, { color: colors.ink }]}>{starsCollected}</Text>
         </View>
         <View style={styles.statusHint}>
           <View style={[styles.statusDot, { backgroundColor: phase === 'moving' ? stoneColor : colors.goal }]} />
@@ -616,13 +725,22 @@ export default function GameScreen() {
           ))}
         </View>
         <Text style={[styles.livesCount, { color: colors.ink }]}>{lives}/{LEVEL_LIVES}</Text>
+        <View style={styles.dailyChip} accessibilityLabel={formatCopy('dailyProgress', { count: String(daily.clears), target: String(DAILY_TARGET) })}>
+          <Text style={[styles.livesLabel, { color: daily.claimed ? colors.goal : colors.mutedForeground }]}>{t('dailyQuest')}</Text>
+          {Array.from({ length: DAILY_TARGET }).map((_, index) => (
+            <View
+              key={`daily-pip-${index}`}
+              style={[styles.dailyPip, { backgroundColor: index < daily.clears ? colors.goal : colors.border }]}
+            />
+          ))}
+        </View>
       </View>
       <View style={styles.chapterProgressRow}>
-        <Text style={[styles.chapterProgressLabel, { color: chapterAccent }]}>{chapter}</Text>
+        <Text style={[styles.chapterProgressLabel, { color: chapterAccent }]} numberOfLines={1}>{chapterTitle}</Text>
         <View style={[styles.chapterProgressTrack, { backgroundColor: colors.gameSurfaceRaised }]}>
-          <View style={[styles.chapterProgressFill, { width: `${chapterProgress * 25}%`, backgroundColor: chapterAccent }]} />
+          <View style={[styles.chapterProgressFill, { width: `${Math.round(chapterFill * 100)}%`, backgroundColor: chapterAccent }]} />
         </View>
-        <Text style={[styles.chapterProgressCount, { color: colors.mutedForeground }]}>{chapterProgress}/4 · {starsCollected} {t('stars')}</Text>
+        <Text style={[styles.chapterProgressCount, { color: colors.mutedForeground }]}>{chapterStep}/{chapterLength ?? '∞'} · {starsCollected} {t('stars')}</Text>
       </View>
 
       <View
@@ -647,6 +765,22 @@ export default function GameScreen() {
         }}
         {...responder.panHandlers}
       >
+        {gridLines.map((y) => (
+          <View key={`grid-${y}`} pointerEvents="none" style={[styles.gridLine, { top: y, backgroundColor: colors.gridLine }]} />
+        ))}
+        {welcome && (
+          <View pointerEvents="none" style={[styles.welcome, { backgroundColor: colors.gameSurfaceRaised, borderColor: chapterAccent }]}>
+            <Feather name="sun" size={18} color={colors.stoneHighlight} />
+            <View style={styles.welcomeCopy}>
+              <Text style={[styles.welcomeTitle, { color: colors.ink }]}>{t('welcomeBack')}</Text>
+              <Text style={[styles.welcomeText, { color: colors.mutedForeground }]}>
+                {welcome.broken
+                  ? t('streakBroken')
+                  : formatCopy('welcomeStreak', { count: String(welcome.streak), target: String(DAILY_TARGET) })}
+              </Text>
+            </View>
+          </View>
+        )}
         {showIntro && (
           <Animated.View
             pointerEvents="none"
@@ -654,7 +788,7 @@ export default function GameScreen() {
           >
             <Feather name="aperture" size={18} color={colors.stoneHighlight} />
             <Text style={[styles.chapterKicker, { color: colors.stoneHighlight }]}>{t('newScene')}</Text>
-            <Text style={[styles.chapterTitle, { color: colors.ink }]}>{chapter}</Text>
+            <Text style={[styles.chapterTitle, { color: colors.ink }]}>{chapterTitle}</Text>
             <Text style={[styles.chapterNumber, { color: colors.mutedForeground }]}>{t('chapter')} {formatLevel(level)}</Text>
           </Animated.View>
         )}
@@ -663,27 +797,8 @@ export default function GameScreen() {
         <Text style={[styles.goalText, { left: goal.x - 25, top: goal.y + 25, color: colors.goal }]}>{t('exit')}</Text>
 
 
-          {trail.length > 1 && trail.slice(1).map((point, index) => {
-            const previous = trail[index];
-            const length = Math.hypot(point.x - previous.x, point.y - previous.y);
-            return (
-              <View
-                key={`trail-${index}`}
-                pointerEvents="none"
-                style={[
-                  styles.trail,
-                  {
-                    width: Math.max(2, length),
-                    left: previous.x,
-                    top: previous.y - 1,
-                    opacity: ((index + 1) / trail.length) * 0.42,
-                    backgroundColor: stoneColor,
-                    transform: [{ rotate: `${Math.atan2(point.y - previous.y, point.x - previous.x)}rad` }],
-                  },
-                ]}
-              />
-            );
-          })}
+        {phase !== 'moving' && renderTrail(ghost, 'ghost', colors.obstacle, 0.34)}
+        {renderTrail(trail, 'trail', stoneColor, 0.42)}
         {course.map((line, index) => {
           const length = Math.hypot(line.x2 - line.x1, line.y2 - line.y1);
           const angle = Math.atan2(line.y2 - line.y1, line.x2 - line.x1);
@@ -824,7 +939,7 @@ export default function GameScreen() {
                   left: launchPoint.x,
                   top: launchPoint.y - 1,
                   transform: [{ rotate: `${Math.atan2(aim.y - launchPoint.y, aim.x - launchPoint.x)}rad` }],
-                  opacity: 0.36 + progress * 0.5,
+                  opacity: 0.36 + aimProgress * 0.5,
                 },
               ]}
             />
@@ -850,12 +965,12 @@ export default function GameScreen() {
                     key={`power-segment-${index}`}
                     style={[
                       styles.powerSegment,
-                      { backgroundColor: progress >= (index + 1) / 5 ? stoneColor : colors.border },
+                      { backgroundColor: aimProgress >= (index + 1) / 5 ? stoneColor : colors.border },
                     ]}
                   />
                 ))}
               </View>
-              <Text style={[styles.powerValue, { color: stoneColor }]}>{Math.round(progress * 100)}</Text>
+              <Text style={[styles.powerValue, { color: stoneColor }]}>{Math.round(aimProgress * 100)}</Text>
             </View>
             {showHelp && (
               <View style={[styles.helpBubble, { backgroundColor: colors.gameSurfaceRaised }]}>
@@ -944,6 +1059,12 @@ export default function GameScreen() {
             <Text style={[styles.resultTitle, { color: colors.ink }]}>{t('hitTitle')}</Text>
             <Text style={[styles.resultCopy, { color: colors.mutedForeground }]}>{t('hitCopy')}</Text>
             <Text style={[styles.livesMessage, { color: colors.stoneHighlight }]}>{formatCopy('livesLeft', { count: String(lives) })}</Text>
+            {hitHint && (
+              <View style={[styles.hintBox, { backgroundColor: colors.gameSurface, borderColor: colors.border }]}>
+                <Text style={[styles.hintLabel, { color: colors.goal }]}>{t('hintTitle')}</Text>
+                <Text style={[styles.hintText, { color: colors.ink }]}>{hitHint}</Text>
+              </View>
+            )}
             <Pressable
               testID="retry-button"
               onPress={retry}
@@ -951,6 +1072,28 @@ export default function GameScreen() {
             >
               <Feather name="rotate-cw" size={16} color={colors.gameBackground} />
               <Text style={[styles.resultButtonText, { color: colors.gameBackground }]}>{t('retry')}</Text>
+            </Pressable>
+          </View>
+        )}
+
+        {phase === 'revive' && (
+          <View style={[styles.resultCard, { backgroundColor: colors.gameSurfaceRaised }]}>
+            <View style={[styles.resultIcon, { backgroundColor: `${colors.goal}22` }]}>
+              <Feather name="droplet" size={20} color={colors.goal} />
+            </View>
+            <Text style={[styles.resultTitle, { color: colors.ink }]}>{t('reviveTitle')}</Text>
+            <Text style={[styles.resultCopy, { color: colors.mutedForeground }]}>{t('reviveCopy')}</Text>
+            <Text style={[styles.livesMessage, { color: colors.goal }]}>{progress.ink} {t('ink')}</Text>
+            <Pressable
+              testID="revive-button"
+              onPress={revive}
+              style={({ pressed }) => [styles.resultButton, { backgroundColor: colors.goal, opacity: pressed ? 0.8 : 1 }]}
+            >
+              <Feather name="droplet" size={16} color={colors.gameBackground} />
+              <Text style={[styles.resultButtonText, { color: colors.gameBackground }]}>{formatCopy('reviveButton', { cost: String(REVIVE_COST) })}</Text>
+            </Pressable>
+            <Pressable onPress={declineRevive} style={styles.secondaryAction}>
+              <Text style={[styles.secondaryActionText, { color: colors.mutedForeground }]}>{t('reviveDecline')}</Text>
             </Pressable>
           </View>
         )}
@@ -998,7 +1141,7 @@ export default function GameScreen() {
         )}
 
         {phase === 'complete' && (
-          <View style={[styles.resultCard, { backgroundColor: colors.gameSurfaceRaised }]}>
+          <View style={[styles.resultCard, styles.completeCard, { backgroundColor: colors.gameSurfaceRaised }]}>
             <View style={[styles.resultIcon, { backgroundColor: `${colors.goal}22` }]}>
               <Feather name="check" size={21} color={colors.goal} />
             </View>
@@ -1017,9 +1160,32 @@ export default function GameScreen() {
             <Text style={[styles.medalText, { color: colors.stoneHighlight }]}>{completion?.medal ?? t('completed')}</Text>
             <Text style={[styles.scoreText, { color: colors.goal }]}>{completion?.score ?? 0} {t('score')}</Text>
             {(completion?.riskBonus ?? 0) > 0 && (
-              <Text style={[styles.riskText, { color: colors.stoneHighlight }]}>+{completion?.riskBonus} risk bonusu</Text>
+              <Text style={[styles.riskText, { color: colors.stoneHighlight }]}>{formatCopy('riskBonus', { count: String(completion?.riskBonus ?? 0) })}</Text>
             )}
-            <Text style={[styles.resultCopy, { color: colors.mutedForeground }]}>{formatCopy('nextCopy', { chapter: chapterForLevel(level + 1) })}</Text>
+            {completion && (
+              <View style={styles.rewardRow}>
+                <View style={[styles.rewardChip, { backgroundColor: `${colors.goal}22` }]}>
+                  <Feather name="droplet" size={12} color={colors.goal} />
+                  <Text style={[styles.rewardText, { color: colors.goal }]}>{formatCopy('inkEarned', { count: String(completion.inkEarned) })}</Text>
+                </View>
+                {completion.newSkins.map((skinId) => (
+                  <View key={skinId} style={[styles.rewardChip, { backgroundColor: `${skinColor(skinId)}22` }]}>
+                    <Feather name="droplet" size={12} color={skinColor(skinId)} />
+                    <Text style={[styles.rewardText, { color: skinColor(skinId) }]}>{formatCopy('newSkin', { name: skinName(skinId) })}</Text>
+                  </View>
+                ))}
+              </View>
+            )}
+            {completion?.dailyJustCompleted && (
+              <Text style={[styles.riskText, { color: colors.goal }]}>{formatCopy('dailyDone', { count: String(DAILY_BONUS_INK) })}</Text>
+            )}
+            {completion?.secretUnlockedFor && (
+              <Text style={[styles.riskText, { color: colors.stoneHighlight }]}>{t('secretUnlocked')}</Text>
+            )}
+            {completionNudges.map((nudge) => (
+              <Text key={nudge} style={[styles.nudgeText, { color: colors.mutedForeground }]}>{nudge}</Text>
+            ))}
+            <Text style={[styles.resultCopy, { color: colors.mutedForeground }]}>{formatCopy('nextCopy', { chapter: L(chapterForLevel(level + 1).name) })}</Text>
             <Pressable
               testID="next-level-button"
               onPress={nextLevel}
@@ -1030,6 +1196,7 @@ export default function GameScreen() {
             </Pressable>
           </View>
         )}
+        {storyCard && <StoryCard kind={storyCard.kind} chapter={storyCard.chapter} colors={colors} onDismiss={dismissStory} />}
       </View>
 
       <View style={styles.footer}>
@@ -1051,14 +1218,14 @@ export default function GameScreen() {
             </>
           )}
         </View>
-        {unlockedSkins.length > 1 && (
+        {progress.skins.length > 1 && (
           <Pressable onPress={cycleSkin} style={styles.skinButton} accessibilityRole="button">
             <Feather name="droplet" size={12} color={stoneColor} />
             <Text style={[styles.legendText, { color: colors.mutedForeground }]}>{t('style')}</Text>
           </Pressable>
         )}
         <Text style={[styles.footerHint, { color: colors.mutedForeground }]}>
-          {t('daily')} {dailyProgress}/3 · {portals.length > 0 ? t('portal') : movingBars.length > 0 ? t('movingObstacle') : t('drag')}
+          {portals.length > 0 ? t('portal') : movingBars.length > 0 ? t('movingObstacle') : t('drag')}
         </Text>
       </View>
     </View>
@@ -1068,7 +1235,7 @@ export default function GameScreen() {
 const styles = StyleSheet.create({
   screen: { flex: 1, paddingHorizontal: 16 },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingTop: 8, paddingBottom: 14 },
-  headerActions: { flexDirection: 'row', alignItems: 'center', gap: 7 },
+  headerActions: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   headerIcon: { width: 34, height: 34, borderRadius: 11, alignItems: 'center', justifyContent: 'center', backgroundColor: '#17253A' },
   brandRow: { flexDirection: 'row', alignItems: 'center', gap: 7 },
   brandMark: { width: 8, height: 8, borderRadius: 4 },
@@ -1141,4 +1308,19 @@ const styles = StyleSheet.create({
   skinButton: { flexDirection: 'row', alignItems: 'center', gap: 4, marginLeft: 8 },
   legendText: { fontSize: 10, fontWeight: '600' },
   footerHint: { fontSize: 10, textAlign: 'right', flexShrink: 1, marginLeft: 10 },
+  gridLine: { position: 'absolute', left: 0, right: 0, height: 1, opacity: 0.55 },
+  welcome: { position: 'absolute', zIndex: 25, top: 12, left: 12, right: 12, flexDirection: 'row', alignItems: 'center', gap: 10, borderRadius: 14, borderWidth: 1, paddingVertical: 10, paddingHorizontal: 13 },
+  welcomeCopy: { flex: 1 },
+  welcomeTitle: { fontSize: 13, fontWeight: '800' },
+  welcomeText: { fontSize: 11, lineHeight: 16, marginTop: 2 },
+  dailyChip: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 5 },
+  dailyPip: { width: 14, height: 5, borderRadius: 3 },
+  completeCard: { top: '14%' },
+  rewardRow: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 6, marginTop: 10 },
+  rewardChip: { flexDirection: 'row', alignItems: 'center', gap: 5, borderRadius: 10, paddingVertical: 5, paddingHorizontal: 9 },
+  rewardText: { fontSize: 11, fontWeight: '800' },
+  nudgeText: { fontSize: 11, lineHeight: 16, textAlign: 'center', marginTop: 5 },
+  hintBox: { alignSelf: 'stretch', borderRadius: 12, borderWidth: 1, paddingVertical: 9, paddingHorizontal: 12, marginTop: 12 },
+  hintLabel: { fontSize: 9, fontWeight: '800', letterSpacing: 1.4 },
+  hintText: { fontSize: 12, lineHeight: 17, marginTop: 3 },
 });

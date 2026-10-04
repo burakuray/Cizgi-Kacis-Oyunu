@@ -1,22 +1,11 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Feather } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useColors } from '@/hooks/useColors';
 import { language, t } from '@/lib/i18n';
-
-const SCORE_HISTORY_KEY = '@cizgi-kacis/score-history';
-type ScoreEntry = { level: number; score: number; stars: number; date: string };
-
-function readScores(value: string | null): ScoreEntry[] {
-  if (!value) return [];
-  try {
-    return JSON.parse(value) as ScoreEntry[];
-  } catch {
-    return [];
-  }
-}
+import type { ScoreEntry } from '@/lib/progress';
+import { loadProgress } from '@/lib/progressStore';
 
 export default function LeaderboardScreen() {
   const colors = useColors();
@@ -24,16 +13,15 @@ export default function LeaderboardScreen() {
   const [scores, setScores] = useState<ScoreEntry[]>([]);
 
   useEffect(() => {
-    AsyncStorage.getItem(SCORE_HISTORY_KEY).then((stored) => {
-      const entries = readScores(stored).sort((left, right) => right.score - left.score).slice(0, 20);
-      setScores(entries);
+    loadProgress().then((stored) => {
+      setScores([...stored.history].sort((left, right) => right.score - left.score).slice(0, 20));
     });
   }, []);
 
   return (
     <ScrollView style={[styles.screen, { backgroundColor: colors.gameBackground }]} contentContainerStyle={styles.content}>
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} style={styles.iconButton} accessibilityLabel="Oyuna dön">
+        <Pressable onPress={() => router.back()} style={styles.iconButton} accessibilityLabel={t('backToGame')}>
           <Feather name="arrow-left" size={20} color={colors.ink} />
         </Pressable>
         <View style={styles.headerCopy}>

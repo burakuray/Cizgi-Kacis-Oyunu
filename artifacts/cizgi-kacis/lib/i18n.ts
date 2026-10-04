@@ -48,6 +48,60 @@ const copy = {
     gameOverTitle: 'Oyun sona erdi',
     gameOverCopy: 'Tekrar başlamak ister misin?',
     restart: 'Yeniden başla',
+    medalPerfect: 'Kusursuz atış',
+    medalClean: 'Temiz geçiş',
+    medalDone: 'Bölüm tamamlandı',
+    riskBonus: '+{count} risk bonusu',
+    ink: 'mürekkep',
+    dayUnit: 'gün',
+    dailyQuest: 'Günlük görev',
+    journal: 'Defter',
+    collection: 'Koleksiyon',
+    storyPages: 'Hikaye sayfaları',
+    turnPage: 'Sayfayı çevir',
+    newPage: 'YENİ SAYFA',
+    pageEnd: 'SAYFA SONU',
+    reviveTitle: 'Son şans',
+    reviveCopy: 'Hakların bitti. Mürekkep harcayıp bu bölümde kalabilirsin.',
+    reviveButton: '{cost} mürekkep ile devam et',
+    reviveDecline: 'Vazgeç',
+    welcomeBack: 'Tekrar hoş geldin!',
+    welcomeStreak: '{count} günlük seri · Bugün {target} bölüm geç',
+    streakBroken: 'Seri bozuldu. Bugün yeniden başla!',
+    inkEarned: '+{count} mürekkep',
+    newSkin: 'Yeni taş: {name}',
+    secretUnlocked: 'Çizer’in notu açıldı',
+    dailyDone: 'Günlük görev tamam! +{count} mürekkep',
+    dailyProgress: 'Günlük görev {count}/{target}',
+    hintTitle: 'İPUCU',
+    hintGeneric: 'Taş durunca bulunduğu yerden yeniden atış yapabilirsin. Gücü kısık tutmayı dene.',
+    hintMoving: 'Hareketli çubuğun ritmini bir tur izle, sonra at.',
+    hintPortal: 'Geçitten çıkan taş hızını korur. Çıkış tarafındaki boşluğa göre nişan al.',
+    hintBouncy: 'Yeşil zıplatıcılar seni öldürmez, geri fırlatır. Açıyı onunla düzelt.',
+    nudgeStars: '{name} taşı için {count} yıldız daha',
+    nudgePerfect: '{name} taşı için {count} kusursuz bölüm daha',
+    nudgeDays: '{name} taşı için {count} gün daha oyna',
+    nudgeChapter: '{name} taşı için {chapter} sayfasını bitir',
+    moreStars: 'Bu bölümde {count} yıldız daha kazanabilirsin',
+    pageLeft: 'Sayfa sonuna {count} bölüm kaldı',
+    pageLast: 'Bu sayfanın son bölümü!',
+    skinCoral: 'Mercan',
+    skinMint: 'Nane',
+    skinGold: 'Altın',
+    skinViolet: 'Mor',
+    skinIce: 'Buz',
+    reqDays: '{count} gün üst üste oyna',
+    reqStars: '{count} yıldız topla',
+    reqPerfect: '{count} bölümü 3 yıldızla geç',
+    reqChapter: '{chapter} sayfasını bitir',
+    journalIntro: 'Nokta’nın yolculuğu burada saklı.',
+    secretLocked: 'Çizer’in notu için bu sayfada {count} yıldız topla',
+    pageLocked: 'Bu sayfaya henüz ulaşmadın',
+    continueJourney: 'Kaldığın yerden devam et',
+    totalStars: 'Toplam yıldız',
+    bestStreak: 'En iyi seri',
+    selected: 'Seçili',
+    backToGame: 'Oyuna dön',
   },
   en: {
     gameName: 'LINE ESCAPE',
@@ -91,6 +145,60 @@ const copy = {
     gameOverTitle: 'Game over',
     gameOverCopy: 'Would you like to play again?',
     restart: 'Restart',
+    medalPerfect: 'Perfect shot',
+    medalClean: 'Clean pass',
+    medalDone: 'Level complete',
+    riskBonus: '+{count} risk bonus',
+    ink: 'ink',
+    dayUnit: 'days',
+    dailyQuest: 'Daily quest',
+    journal: 'Notebook',
+    collection: 'Collection',
+    storyPages: 'Story pages',
+    turnPage: 'Turn the page',
+    newPage: 'NEW PAGE',
+    pageEnd: 'END OF PAGE',
+    reviveTitle: 'Last chance',
+    reviveCopy: 'You are out of lives. Spend ink to stay on this level.',
+    reviveButton: 'Continue for {cost} ink',
+    reviveDecline: 'Give up',
+    welcomeBack: 'Welcome back!',
+    welcomeStreak: '{count}-day streak · Clear {target} levels today',
+    streakBroken: 'Streak lost. Start a new one today!',
+    inkEarned: '+{count} ink',
+    newSkin: 'New stone: {name}',
+    secretUnlocked: 'Artist’s note unlocked',
+    dailyDone: 'Daily quest complete! +{count} ink',
+    dailyProgress: 'Daily quest {count}/{target}',
+    hintTitle: 'TIP',
+    hintGeneric: 'When the stone stops you can shoot again from where it rests. Try using less power.',
+    hintMoving: 'Watch the moving bar for one full swing, then shoot.',
+    hintPortal: 'A stone leaving a portal keeps its speed. Aim for the gap on the exit side.',
+    hintBouncy: 'Green bouncers do not hurt, they throw you back. Use them to correct your angle.',
+    nudgeStars: '{count} more stars for the {name} stone',
+    nudgePerfect: '{count} more perfect levels for the {name} stone',
+    nudgeDays: 'Play {count} more days for the {name} stone',
+    nudgeChapter: 'Finish {chapter} for the {name} stone',
+    moreStars: 'You can still earn {count} more stars here',
+    pageLeft: '{count} levels until the end of the page',
+    pageLast: 'Last level of this page!',
+    skinCoral: 'Coral',
+    skinMint: 'Mint',
+    skinGold: 'Gold',
+    skinViolet: 'Violet',
+    skinIce: 'Ice',
+    reqDays: 'Play {count} days in a row',
+    reqStars: 'Collect {count} stars',
+    reqPerfect: 'Clear {count} levels with 3 stars',
+    reqChapter: 'Finish {chapter}',
+    journalIntro: 'Dot’s journey is kept here.',
+    secretLocked: 'Collect {count} stars on this page for the Artist’s note',
+    pageLocked: 'You have not reached this page yet',
+    continueJourney: 'Continue where you left off',
+    totalStars: 'Total stars',
+    bestStreak: 'Best streak',
+    selected: 'Selected',
+    backToGame: 'Back to game',
   },
 } as const;
 
@@ -104,15 +212,12 @@ export function formatCopy(key: CopyKey, values: Record<string, string>) {
   return Object.entries(values).reduce<string>((text, [name, value]) => text.replace(`{${name}}`, value), t(key));
 }
 
-export function chapterName(level: number) {
-  if (language === 'en') {
-    if (level >= 9) return 'Storm Corridor';
-    if (level >= 5) return 'Portal Room';
-    if (level >= 3) return 'Thorn Garden';
-    return 'First Trace';
-  }
-  if (level >= 9) return 'Fırtına Koridoru';
-  if (level >= 5) return 'Geçit Odası';
-  if (level >= 3) return 'Diken Bahçesi';
-  return 'İlk İz';
+/** Picks the active language from a `{ tr, en }` pair. */
+export function L<T>(value: { tr: T; en: T }): T {
+  return value[language];
+}
+
+export function skinName(skinId: string) {
+  const key = `skin${skinId.charAt(0).toUpperCase()}${skinId.slice(1)}` as CopyKey;
+  return key in copy.tr ? t(key) : skinId;
 }

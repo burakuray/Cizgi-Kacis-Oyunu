@@ -24,6 +24,7 @@ function RootLayoutNav() {
     <Stack screenOptions={{ headerShown: false, animation: 'fade' }}>
       <Stack.Screen name="index" />
       <Stack.Screen name="map" />
+      <Stack.Screen name="journal" />
       <Stack.Screen name="leaderboard" />
     </Stack>
   );
