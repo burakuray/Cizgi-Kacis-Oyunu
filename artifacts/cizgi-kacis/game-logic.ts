@@ -81,6 +81,54 @@ function segmentCollidesWithAny(candidate: Segment, segments: Segment[], pad = 1
   return segments.some((segment) => segmentsOverlap(candidate, segment, pad));
 }
 
+function orientation(a: Point, b: Point, c: Point) {
+  const value = (b.y - a.y) * (c.x - b.x) - (b.x - a.x) * (c.y - b.y);
+  if (Math.abs(value) < 0.0001) return 0;
+  return value > 0 ? 1 : 2;
+}
+
+function onSegment(a: Point, b: Point, c: Point) {
+  return (
+    b.x >= Math.min(a.x, c.x) - 0.0001 &&
+    b.x <= Math.max(a.x, c.x) + 0.0001 &&
+    b.y >= Math.min(a.y, c.y) - 0.0001 &&
+    b.y <= Math.max(a.y, c.y) + 0.0001
+  );
+}
+
+function segmentsIntersect(a: Segment, b: Segment) {
+  const a1 = { x: a.x1, y: a.y1 };
+  const a2 = { x: a.x2, y: a.y2 };
+  const b1 = { x: b.x1, y: b.y1 };
+  const b2 = { x: b.x2, y: b.y2 };
+  const o1 = orientation(a1, a2, b1);
+  const o2 = orientation(a1, a2, b2);
+  const o3 = orientation(b1, b2, a1);
+  const o4 = orientation(b1, b2, a2);
+  if (o1 !== o2 && o3 !== o4) return true;
+  if (o1 === 0 && onSegment(a1, b1, a2)) return true;
+  if (o2 === 0 && onSegment(a1, b2, a2)) return true;
+  if (o3 === 0 && onSegment(b1, a1, b2)) return true;
+  if (o4 === 0 && onSegment(b1, a2, b2)) return true;
+  return false;
+}
+
+function segmentDistance(a: Segment, b: Segment) {
+  if (segmentsIntersect(a, b)) return 0;
+  return Math.min(
+    distanceToSegment({ x: a.x1, y: a.y1 }, b),
+    distanceToSegment({ x: a.x2, y: a.y2 }, b),
+    distanceToSegment({ x: b.x1, y: b.y1 }, a),
+    distanceToSegment({ x: b.x2, y: b.y2 }, a),
+  );
+}
+
+export function isDirectEscapeBlocked(origin: Point, goal: Point, obstacles: Segment[], padding = STONE_RADIUS + 4) {
+  const escapeLine: Segment = { x1: origin.x, y1: origin.y, x2: goal.x, y2: goal.y };
+  return obstacles.some((obstacle) => segmentDistance(escapeLine, obstacle) <= padding);
+}
+
+
 type PlacementBounds = { minX: number; maxX: number; minY: number; maxY: number };
 
 /**
@@ -175,6 +223,40 @@ export function makeCourse(level: number, width: number, height: number): Segmen
   if (level >= 7) {
     const y = usableTop + 158 + ((level * 29) % 52);
     addSafeHorizontal({ x1: 26, y1: y, x2: width * 0.34, y2: y });
+  }
+
+  // From level 3 onward, never leave the start-to-exit spine completely open.
+  // This prevents a lucky single launch from reaching the fixed exit directly.
+  if (level >= 3 && !isDirectEscapeBlocked(
+    { x: width / 2, y: height - 57 },
+    { x: width / 2, y: 51 },
+    lines,
+    STONE_RADIUS + 5,
+  )) {
+    const centerX = width / 2;
+    const candidates = [
+      usableTop + 90,
+      usableTop + 150,
+      usableTop + 210,
+      usableTop + 270,
+      usableTop + 330,
+    ];
+    for (const centerY of candidates) {
+      const candidate = {
+        x1: centerX,
+        y1: centerY - 46,
+        x2: centerX,
+        y2: centerY + 46,
+      };
+      if (
+        candidate.y1 >= usableTop + 10 &&
+        candidate.y2 <= usableBottom - 10 &&
+        !segmentCollidesWithAny(candidate, lines, 12)
+      ) {
+        lines.push(candidate);
+        break;
+      }
+    }
   }
   return lines;
 }
@@ -352,9 +434,21 @@ export function makePortals(level: number, width: number, height: number): Porta
   const fixedBars = [...makeCourse(level, width, height), ...makeBouncyBarriers(level, width, height)];
   const sweeps = makeMovingBars(level, width, height).map(sweptSegment);
   const placed: Point[] = [];
+  const directEscapeLine: Segment = {
+    x1: width / 2,
+    y1: height - 57,
+    x2: width / 2,
+    y2: 51,
+  };
+  const DIRECT_SPINE_CLEARANCE = 44;
+
   const scoreFor = (sweepNeed: number) => (candidate: Point) =>
     Math.min(
       clearanceTo(candidate, fixedBars) - SPINE_CLEARANCE,
+      segmentDistance(
+        { x1: candidate.x, y1: candidate.y, x2: candidate.x, y2: candidate.y },
+        directEscapeLine,
+      ) - DIRECT_SPINE_CLEARANCE,
       sweeps.length > 0 ? clearanceTo(candidate, sweeps) - sweepNeed : Infinity,
       placed.reduce((nearest, other) => Math.min(nearest, Math.hypot(candidate.x - other.x, candidate.y - other.y)), Infinity) - PORTAL_GAP,
     );
