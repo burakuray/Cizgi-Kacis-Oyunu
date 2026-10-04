@@ -235,22 +235,25 @@ export function makeCourse(level: number, width: number, height: number): Segmen
   )) {
     const centerX = width / 2;
     const candidates = [
-      usableTop + 90,
-      usableTop + 150,
-      usableTop + 210,
-      usableTop + 270,
-      usableTop + 330,
+      usableTop + 80,
+      usableTop + 125,
+      usableTop + 170,
+      usableTop + 215,
+      usableTop + 260,
+      usableTop + 305,
     ];
     for (const centerY of candidates) {
+      // A short horizontal gate in the central lane blocks the exact
+      // start-to-exit spine without crossing the neighbouring vertical walls.
       const candidate = {
-        x1: centerX,
-        y1: centerY - 46,
-        x2: centerX,
-        y2: centerY + 46,
+        x1: Math.max(26, centerX - 68),
+        y1: centerY,
+        x2: Math.min(width - 26, centerX + 68),
+        y2: centerY,
       };
       if (
-        candidate.y1 >= usableTop + 10 &&
-        candidate.y2 <= usableBottom - 10 &&
+        candidate.y1 >= usableTop + 20 &&
+        candidate.y1 <= usableBottom - 20 &&
         !segmentCollidesWithAny(candidate, lines, 12)
       ) {
         lines.push(candidate);
