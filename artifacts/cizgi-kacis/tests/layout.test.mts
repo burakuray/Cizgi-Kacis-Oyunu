@@ -112,6 +112,32 @@ test('portal endpoints stay away from the direct start-to-exit spine', () => {
   }
 });
 
+test('portal teleports cannot be followed by a clean direct shot to the exit', () => {
+  for (const { width, height } of BOARDS) {
+    const goal = { x: width / 2, y: 51 };
+    for (let level = 4; level <= 40; level += 1) {
+      const obstacles = [
+        ...makeCourse(level, width, height),
+        ...makeBouncyBarriers(level, width, height),
+        ...makeMovingBars(level, width, height).map((bar) => ({
+          x1: bar.segment.x1 - bar.travel,
+          y1: bar.segment.y1,
+          x2: bar.segment.x2 + bar.travel,
+          y2: bar.segment.y2,
+        })),
+      ];
+      for (const pair of makePortals(level, width, height)) {
+        for (const point of [pair.a, pair.b]) {
+          assert.ok(
+            isDirectEscapeBlocked(point, goal, obstacles),
+            `level ${level}: portal ${pair.id} can lead directly to the exit after teleport`,
+          );
+        }
+      }
+    }
+  }
+});
+
 test('portals in the story levels no longer sit on top of thorn bars or bouncers', () => {
   for (const { width, height } of BOARDS) {
     for (let level = 4; level <= 12; level += 1) {
