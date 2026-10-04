@@ -3,7 +3,15 @@ import { getLocales } from 'expo-localization';
 export type Language = 'tr' | 'en';
 
 const deviceLanguage = getLocales()[0]?.languageCode?.toLowerCase();
-export const language: Language = deviceLanguage?.startsWith('en') ? 'en' : 'tr';
+export let language: Language = deviceLanguage?.startsWith('en') ? 'en' : 'tr';
+
+export function setLanguage(next: Language) {
+  language = next;
+}
+
+export function toggleLanguage() {
+  setLanguage(language === 'tr' ? 'en' : 'tr');
+}
 
 const copy = {
   tr: {
@@ -103,6 +111,7 @@ const copy = {
     bestStreak: 'En iyi seri',
     selected: 'Seçili',
     backToGame: 'Oyuna dön',
+    languageToggle: 'Dili değiştir',
   },
   en: {
     gameName: 'LINE ESCAPE',
@@ -201,6 +210,7 @@ const copy = {
     bestStreak: 'Best streak',
     selected: 'Selected',
     backToGame: 'Back to game',
+    languageToggle: 'Switch language',
   },
 } as const;
 

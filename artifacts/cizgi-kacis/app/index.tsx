@@ -17,7 +17,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useColors } from '@/hooks/useColors';
 import { BoardArt, LegendGlyph, StoneSprite } from '@/components/BoardArt';
 import { StoryCard } from '@/components/StoryCard';
-import { type CopyKey, L, formatCopy, skinName, t } from '@/lib/i18n';
+import { type CopyKey, type Language, L, formatCopy, language, setLanguage, skinName, t } from '@/lib/i18n';
 import {
   DAILY_BONUS_INK,
   DAILY_TARGET,
@@ -108,6 +108,7 @@ export default function GameScreen() {
   const insets = useSafeAreaInsets();
   const [board, setBoard] = useState({ width: Dimensions.get('window').width - 32, height: 480 });
   const [level, setLevel] = useState(1);
+  const [locale, setLocale] = useState<Language>(language);
   const [runScore, setRunScore] = useState(0);
   const [soundEnabled, setSoundEnabledState] = useState(true);
   const [, setAttempts] = useState(0);
@@ -177,6 +178,12 @@ export default function GameScreen() {
 
   const chapter = chapterForLevel(level);
   const chapterTitle = L(chapter.name);
+  const switchLanguage = () => {
+    const nextLanguage = locale === 'tr' ? 'en' : 'tr';
+    setLanguage(nextLanguage);
+    setLocale(nextLanguage);
+    void AsyncStorage.setItem('@cizgi-kacis/language', nextLanguage);
+  };
 
   useEffect(() => {
     if (!loaded) return;
@@ -241,11 +248,19 @@ export default function GameScreen() {
 
   useEffect(() => {
     let active = true;
-    Promise.all([loadProgress(), AsyncStorage.getItem(SOUND_ENABLED_KEY)]).then(([stored, storedSound]) => {
+    Promise.all([
+      loadProgress(),
+      AsyncStorage.getItem(SOUND_ENABLED_KEY),
+      AsyncStorage.getItem('@cizgi-kacis/language'),
+    ]).then(([stored, storedSound, storedLanguage]) => {
       if (!active) return;
       const enabled = storedSound !== 'false';
       setSoundEnabledState(enabled);
       setSoundEnabled(enabled);
+      if (storedLanguage === 'tr' || storedLanguage === 'en') {
+        setLanguage(storedLanguage);
+        setLocale(storedLanguage);
+      }
       const touched = touchDay(stored, localDate());
       commit(touched.progress);
       if (!Number.isInteger(Number(routeLevel)) || Number(routeLevel) < 1) {
@@ -669,6 +684,9 @@ export default function GameScreen() {
           </Pressable>
           <Pressable onPress={toggleSound} style={styles.headerIcon} accessibilityLabel={soundEnabled ? t('soundOn') : t('soundOff')}>
             <Feather name={soundEnabled ? 'volume-2' : 'volume-x'} size={16} color={soundEnabled ? colors.stoneHighlight : colors.mutedForeground} />
+          </Pressable>
+          <Pressable onPress={switchLanguage} style={styles.localeButton} accessibilityLabel={t('languageToggle')} accessibilityRole="button">
+            <Text style={[styles.localeButtonText, { color: colors.ink }]}>{locale === 'tr' ? 'TR' : 'EN'}</Text>
           </Pressable>
           <View style={[styles.levelPill, { backgroundColor: colors.gameSurface }]}>
             <Text style={[styles.levelLabel, { color: colors.mutedForeground }]}>{t('section')}</Text>
@@ -1097,6 +1115,8 @@ const styles = StyleSheet.create({
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingTop: 8, paddingBottom: 14 },
   headerActions: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   headerIcon: { width: 34, height: 34, borderRadius: 11, alignItems: 'center', justifyContent: 'center', backgroundColor: '#17253A' },
+  localeButton: { minWidth: 40, height: 34, borderRadius: 11, alignItems: 'center', justifyContent: 'center', backgroundColor: '#17253A', paddingHorizontal: 10, borderWidth: 1, borderColor: '#2A3B50' },
+  localeButtonText: { fontSize: 10, fontWeight: '800', letterSpacing: 1.2 },
   brandRow: { flexDirection: 'row', alignItems: 'center', gap: 7 },
   brandMark: { width: 8, height: 8, borderRadius: 4 },
   eyebrow: { fontSize: 10, letterSpacing: 2.1, fontWeight: '800' },
