@@ -65,6 +65,22 @@ function clearanceTo(point: Point, segments: Segment[]) {
   return segments.reduce((nearest, segment) => Math.min(nearest, distanceToSegment(point, segment)), Infinity);
 }
 
+function segmentsOverlap(a: Segment, b: Segment, pad = 8) {
+  const aMinX = Math.min(a.x1, a.x2) - pad;
+  const aMaxX = Math.max(a.x1, a.x2) + pad;
+  const aMinY = Math.min(a.y1, a.y2) - pad;
+  const aMaxY = Math.max(a.y1, a.y2) + pad;
+  const bMinX = Math.min(b.x1, b.x2) - pad;
+  const bMaxX = Math.max(b.x1, b.x2) + pad;
+  const bMinY = Math.min(b.y1, b.y2) - pad;
+  const bMaxY = Math.max(b.y1, b.y2) + pad;
+  return !(aMaxX < bMinX || bMaxX < aMinX || aMaxY < bMinY || bMaxY < aMinY);
+}
+
+function segmentCollidesWithAny(candidate: Segment, segments: Segment[], pad = 10) {
+  return segments.some((segment) => segmentsOverlap(candidate, segment, pad));
+}
+
 type PlacementBounds = { minX: number; maxX: number; minY: number; maxY: number };
 
 /**
@@ -98,6 +114,28 @@ export function makeCourse(level: number, width: number, height: number): Segmen
   const usableBottom = height - 116;
   const laneWidth = width / (count + 1);
 
+  const addSafeVertical = (x: number, topY: number, bottomY: number) => {
+    const top = { x1: x, y1: usableTop, x2: x, y2: topY };
+    const bottom = { x1: x, y1: bottomY, x2: x, y2: usableBottom };
+    if (!segmentCollidesWithAny(top, lines, 12) && !segmentCollidesWithAny(bottom, lines, 12)) {
+      lines.push(top, bottom);
+      return true;
+    }
+
+    for (const delta of [12, -12, 24, -24, 36, -36, 48, -48, 60, -60]) {
+      const candidateTopY = topY + delta;
+      const candidateBottomY = Math.min(usableBottom - 22, candidateTopY + Math.max(44, (height - usableTop - usableBottom) / 2 + ((x / laneWidth) % 2) * 24) + Math.max(30, 62 - Math.floor(level / 3) * 5) + ((level + Math.round(x / laneWidth) * 13) % 3) * 11);
+      const candidateTop = { x1: x, y1: usableTop, x2: x, y2: candidateTopY };
+      const candidateBottom = { x1: x, y1: candidateBottomY, x2: x, y2: usableBottom };
+      if (!segmentCollidesWithAny(candidateTop, lines, 12) && !segmentCollidesWithAny(candidateBottom, lines, 12)) {
+        lines.push(candidateTop, candidateBottom);
+        return true;
+      }
+    }
+
+    return false;
+  };
+
   for (let index = 0; index < count; index += 1) {
     const x = laneWidth * (index + 1);
     const gap = Math.max(30, 62 - Math.floor(level / 3) * 5) + ((level + index * 13) % 3) * 11;
@@ -105,21 +143,38 @@ export function makeCourse(level: number, width: number, height: number): Segmen
     const topLength = Math.max(44, (height - usableTop - usableBottom) / 2 + shift);
     const topY = usableTop + ((index * 37 + level * 19) % 55);
     const bottomY = Math.min(usableBottom - 22, topY + topLength + gap);
-    lines.push({ x1: x, y1: usableTop, x2: x, y2: topY });
-    lines.push({ x1: x, y1: bottomY, x2: x, y2: usableBottom });
+    addSafeVertical(x, topY, bottomY);
   }
+
+  const addSafeHorizontal = (segment: Segment, pad = 16) => {
+    if (!segmentCollidesWithAny(segment, lines, pad)) {
+      lines.push(segment);
+      return true;
+    }
+
+    const baseY = segment.y1;
+    for (const delta of [18, -18, 36, -36, 54, -54, 72, -72, 90, -90]) {
+      const candidate = { ...segment, y1: baseY + delta, y2: baseY + delta };
+      if (!segmentCollidesWithAny(candidate, lines, pad)) {
+        lines.push(candidate);
+        return true;
+      }
+    }
+
+    return false;
+  };
 
   if (level >= 3) {
     const y = usableTop + 100 + ((level * 23) % 60);
-    lines.push({ x1: 26, y1: y, x2: width * 0.42, y2: y });
+    addSafeHorizontal({ x1: 26, y1: y, x2: width * 0.42, y2: y });
   }
   if (level >= 5) {
     const y = usableTop + 214 + ((level * 17) % 56);
-    lines.push({ x1: width * 0.58, y1: y, x2: width - 26, y2: y });
+    addSafeHorizontal({ x1: width * 0.58, y1: y, x2: width - 26, y2: y });
   }
   if (level >= 7) {
     const y = usableTop + 158 + ((level * 29) % 52);
-    lines.push({ x1: 26, y1: y, x2: width * 0.34, y2: y });
+    addSafeHorizontal({ x1: 26, y1: y, x2: width * 0.34, y2: y });
   }
   return lines;
 }
@@ -203,17 +258,47 @@ export function makeMovingBars(level: number, width: number, height: number): Mo
   const barLength = 88;
   const count = movingBarCount;
   const bars: MovingBar[] = [];
+  const reserved: Segment[] = [...course];
 
   for (let index = 0; index < count; index += 1) {
     const lane = lanes[(level + index) % lanes.length];
-    const y = safeYs[(level * 3 + index) % safeYs.length];
     const direction = (level + index) % 2 === 0 ? 1 : -1;
     const maxTravel = Math.max(18, Math.min(40, (lane.maxX - lane.minX - barLength) / 2));
     const centerX = lane.centerX;
+    const candidateY = safeYs[(level * 3 + index) % safeYs.length];
 
+    const base = {
+      x1: centerX - barLength / 2,
+      y1: candidateY,
+      x2: centerX + barLength / 2,
+      y2: candidateY,
+    };
+
+    let chosenY = candidateY;
+    let chosenBase = base;
+    let found = false;
+
+    for (let offset = 0; offset < safeYs.length; offset += 1) {
+      const candidate = {
+        x1: centerX - barLength / 2,
+        y1: safeYs[(level * 3 + index + offset) % safeYs.length],
+        x2: centerX + barLength / 2,
+        y2: safeYs[(level * 3 + index + offset) % safeYs.length],
+      };
+      if (!segmentCollidesWithAny(candidate, reserved, 18)) {
+        chosenBase = candidate;
+        chosenY = candidate.y1;
+        found = true;
+        break;
+      }
+    }
+
+    if (!found) continue;
+
+    reserved.push(chosenBase);
     bars.push({
       id: `sweep-${level}-${index}`,
-      segment: { x1: centerX - barLength / 2, y1: y, x2: centerX + barLength / 2, y2: y },
+      segment: chosenBase,
       axis: 'x',
       direction: direction as -1 | 1,
       travel: maxTravel,

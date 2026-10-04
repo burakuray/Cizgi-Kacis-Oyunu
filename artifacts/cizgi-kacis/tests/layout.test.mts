@@ -27,6 +27,50 @@ const palette: Palette = {
   border: '#2A3F5F',
 };
 
+function segmentsOverlap(a: { x1: number; y1: number; x2: number; y2: number }, b: { x1: number; y1: number; x2: number; y2: number }, pad = 8) {
+  const minX = Math.min(a.x1, a.x2, b.x1, b.x2) - pad;
+  const maxX = Math.max(a.x1, a.x2, b.x1, b.x2) + pad;
+  const minY = Math.min(a.y1, a.y2, b.y1, b.y2) - pad;
+  const maxY = Math.max(a.y1, a.y2, b.y1, b.y2) + pad;
+
+  const aXMin = Math.min(a.x1, a.x2) - pad;
+  const aXMax = Math.max(a.x1, a.x2) + pad;
+  const aYMin = Math.min(a.y1, a.y2) - pad;
+  const aYMax = Math.max(a.y1, a.y2) + pad;
+  const bXMin = Math.min(b.x1, b.x2) - pad;
+  const bXMax = Math.max(b.x1, b.x2) + pad;
+  const bYMin = Math.min(b.y1, b.y2) - pad;
+  const bYMax = Math.max(b.y1, b.y2) + pad;
+
+  return !(aXMax < bXMin || bXMax < aXMin || aYMax < bYMin || bYMax < aYMin) && !(maxX - minX <= 0 || maxY - minY <= 0);
+}
+
+test('static thorn bars and moving bars do not overlap each other', () => {
+  for (const { width, height } of BOARDS) {
+    for (let level = 1; level <= 25; level += 1) {
+      const staticBars = makeCourse(level, width, height);
+      const movingBars = makeMovingBars(level, width, height).map((bar) => ({
+        x1: bar.segment.x1,
+        y1: bar.segment.y1,
+        x2: bar.segment.x2,
+        y2: bar.segment.y2,
+      }));
+
+      for (const [index, first] of staticBars.entries()) {
+        for (const second of staticBars.slice(index + 1)) {
+          assert.ok(!segmentsOverlap(first, second, 6), `level ${level}: static thorn bars overlap (${JSON.stringify(first)} vs ${JSON.stringify(second)})`);
+        }
+      }
+
+      for (const staticBar of staticBars) {
+        for (const movingBar of movingBars) {
+          assert.ok(!segmentsOverlap(staticBar, movingBar, 12), `level ${level}: moving bar overlaps a static thorn bar`);
+        }
+      }
+    }
+  }
+});
+
 test('portals in the story levels no longer sit on top of thorn bars or bouncers', () => {
   for (const { width, height } of BOARDS) {
     for (let level = 4; level <= 12; level += 1) {
