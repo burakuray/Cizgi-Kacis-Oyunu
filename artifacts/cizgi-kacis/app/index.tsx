@@ -768,6 +768,8 @@ export default function GameScreen() {
           movingBars={movingBars}
           goal={goal}
           origin={origin}
+          chapterId={chapter.id}
+          level={level}
           stoneColor={stoneColor}
           trail={trail}
           ghost={phase === 'moving' ? [] : ghost}

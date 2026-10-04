@@ -65,6 +65,8 @@ type BoardArtProps = {
   movingBars: Segment[];
   goal: Point;
   origin: Point;
+  chapterId?: string;
+  level?: number;
   stoneColor: string;
   trail: Point[];
   ghost: Point[];
@@ -77,12 +79,12 @@ type BoardArtProps = {
  * only the moving bars, trail and aim guide are rebuilt per frame. It never receives touches.
  */
 export function BoardArt(props: BoardArtProps) {
-  const { width, height, palette, exitLabel, course, bouncy, portals, movingBlueprints, goal, origin } = props;
+  const { width, height, palette, exitLabel, course, bouncy, portals, movingBlueprints, goal, origin, chapterId, level } = props;
   const paletteKey = Object.values(palette).join('|');
   const staticArt = useMemo(
-    () => buildStaticArt({ width, height, course, bouncy, portals, movingBlueprints, goal, origin, exitLabel }, palette),
+    () => buildStaticArt({ width, height, course, bouncy, portals, movingBlueprints, goal, origin, exitLabel, chapterId, level }, palette),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [width, height, course, bouncy, portals, movingBlueprints, goal, origin, exitLabel, paletteKey],
+    [width, height, course, bouncy, portals, movingBlueprints, goal, origin, exitLabel, chapterId, level, paletteKey],
   );
   const dynamic: Op[] = [
     ...(props.ghost.length > 1 ? ghostOps(props.ghost, palette.obstacle) : []),

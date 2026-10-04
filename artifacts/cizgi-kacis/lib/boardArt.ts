@@ -191,16 +191,49 @@ export function startOps(origin: Point, p: Palette): Op[] {
   ];
 }
 
-/** Notebook paper: ruled lines, a margin and ring-binder punch holes. */
-export function paperOps(width: number, height: number, p: Palette): Op[] {
+/** The page background is intentionally stripped back to chapter-specific atmosphere rather than a notebook grid. */
+export function backgroundSceneOps(width: number, height: number, chapterId: string, level: number, p: Palette): Op[] {
+  const seed = chapterId.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0) + level * 97;
+  const value = (n: number) => {
+    const x = Math.sin(seed * 12.9898 + n * 78.233) * 43758.5453;
+    return x - Math.floor(x);
+  };
+  const accentColors = [p.obstacle, p.goal, p.stoneHighlight, p.border];
+  const themes: Record<string, (i: number, c: number, r: number) => Op[]> = {
+    'first-trace': (x, y, r) => [
+      { k: 'circle', cx: x, cy: y, r, fill: accentColors[(x + y) % accentColors.length], o: 0.08 + value(y) * 0.06 },
+      { k: 'path', d: `M${f(x - r)} ${f(y + r * 0.5)}Q${f(x)} ${f(y - r * 1.4)} ${f(x + r)} ${f(y + r * 0.5)}`, stroke: accentColors[(x + y) % accentColors.length], sw: 1.4, o: 0.2, cap: 'round' },
+    ],
+    'thorn-garden': (x, y, r) => [
+      { k: 'path', d: `M${f(x - r * 0.8)} ${f(y)}Q${f(x)} ${f(y - r * 1.2)} ${f(x + r * 0.8)} ${f(y)}Q${f(x)} ${f(y + r * 1.1)} ${f(x - r * 0.8)} ${f(y)}`, fill: accentColors[0], o: 0.08 + value(y) * 0.07 },
+      { k: 'circle', cx: x, cy: y, r: r * 0.38, stroke: accentColors[0], sw: 1, o: 0.24 },
+    ],
+    'portal-room': (x, y, r) => [
+      { k: 'circle', cx: x, cy: y, r: r * 1.2, stroke: accentColors[2], sw: 1.2, o: 0.16 + value(y) * 0.08 },
+      { k: 'path', d: spiral(x, y, r * 0.4, r * 1.3, 0.9 + value(x) * 0.7, value(y) * Math.PI, 1), stroke: accentColors[1], sw: 1.1, o: 0.18 },
+    ],
+    'storm-corridor': (x, y, r) => [
+      { k: 'path', d: `M${f(x - r * 1.1)} ${f(y)}L${f(x - r * 0.3)} ${f(y - r * 0.7)}L${f(x + r * 0.2)} ${f(y)}L${f(x + r * 0.9)} ${f(y - r * 0.9)}L${f(x + r * 1.1)} ${f(y)}`, stroke: accentColors[2], sw: 1.4, o: 0.2, cap: 'round' },
+      { k: 'circle', cx: x, cy: y, r: r * 0.6, fill: accentColors[2], o: 0.05 },
+    ],
+    'erasers-shadow': (x, y, r) => [
+      { k: 'ellipse', cx: x, cy: y, rx: r * 1.5, ry: r * 0.8, fill: accentColors[0], o: 0.07 + value(y) * 0.05 },
+      { k: 'circle', cx: x, cy: y, r: r * 0.64, stroke: accentColors[3], sw: 1, o: 0.18 },
+    ],
+    'draft-pages': (x, y, r) => [
+      { k: 'path', d: `M${f(x - r)} ${f(y - r * 0.2)}Q${f(x)} ${f(y - r * 1.3)} ${f(x + r)} ${f(y)}Q${f(x)} ${f(y + r * 1.1)} ${f(x - r)} ${f(y - r * 0.2)}`, fill: accentColors[1], o: 0.06 },
+      { k: 'circle', cx: x, cy: y, r: r * 0.42, stroke: accentColors[1], sw: 1.1, o: 0.22 },
+    ],
+  };
+
+  const theme = themes[chapterId] ?? themes['first-trace'];
   const ops: Op[] = [];
-  for (let y = 30; y < height; y += 28) {
-    ops.push({ k: 'line', x1: 0, y1: y, x2: width, y2: y, stroke: p.gridLine, sw: 1, o: 0.55 });
-  }
-  ops.push({ k: 'line', x1: 30, y1: 0, x2: 30, y2: height, stroke: p.gridLine, sw: 1, o: 0.8 });
-  const holes = 6;
-  for (let i = 1; i <= holes; i += 1) {
-    ops.push({ k: 'circle', cx: 11, cy: (height * i) / (holes + 1), r: 3.8, fill: p.background, stroke: p.border, sw: 1, o: 0.75 });
+  const count = 8 + Math.max(0, Math.floor(level / 2));
+  for (let i = 0; i < count; i += 1) {
+    const cx = width * (0.14 + value(i + 2) * 0.72);
+    const cy = height * (0.16 + value(i + 7) * 0.68);
+    const r = 18 + value(i + 13) * 44;
+    ops.push(...theme(cx, cy, r));
   }
   return ops;
 }
@@ -217,12 +250,17 @@ export type StaticInput = {
   goal: Point;
   origin: Point;
   exitLabel: string;
+  chapterId?: string;
+  level?: number;
 };
 
 /** Everything that does not move during a level. Build once per level, not once per frame. */
 export function buildStaticArt(input: StaticInput, p: Palette): Art {
   const defs: Grad[] = [];
-  const ops: Op[] = [...paperOps(input.width, input.height, p), ...startOps(input.origin, p)];
+  const ops: Op[] = [
+    ...backgroundSceneOps(input.width, input.height, input.chapterId ?? 'first-trace', input.level ?? 1, p),
+    ...startOps(input.origin, p),
+  ];
   input.movingBlueprints.forEach((bar) => ops.push(...movingTrackOps(bar, p)));
   input.portals.forEach((pair, index) => {
     const art = portalArt(pair, index, p);
