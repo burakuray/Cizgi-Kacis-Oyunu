@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   HOLE_RADIUS,
+  isDirectEscapeBlocked,
   distanceToSegment,
   makeBouncyBarriers,
   makeCourse,
@@ -65,6 +66,46 @@ test('static thorn bars and moving bars do not overlap each other', () => {
       for (const staticBar of staticBars) {
         for (const movingBar of movingBars) {
           assert.ok(!segmentsOverlap(staticBar, movingBar, 12), `level ${level}: moving bar overlaps a static thorn bar`);
+        }
+      }
+    }
+  }
+});
+
+
+test('levels 3+ never leave a clean one-launch path from the stone to the exit', () => {
+  for (const { width, height } of BOARDS) {
+    const origin = { x: width / 2, y: height - 57 };
+    const goal = { x: width / 2, y: 51 };
+    for (let level = 3; level <= 40; level += 1) {
+      const obstacles = [
+        ...makeCourse(level, width, height),
+        ...makeBouncyBarriers(level, width, height),
+        ...makeMovingBars(level, width, height).map((bar) => ({
+          x1: bar.segment.x1 - bar.travel,
+          y1: bar.segment.y1,
+          x2: bar.segment.x2 + bar.travel,
+          y2: bar.segment.y2,
+        })),
+      ];
+      assert.ok(
+        isDirectEscapeBlocked(origin, goal, obstacles),
+        `level ${level} ${width}x${height}: direct start-to-exit path is still open`,
+      );
+    }
+  }
+});
+
+test('portal endpoints stay away from the direct start-to-exit spine', () => {
+  for (const { width, height } of BOARDS) {
+    const spine = { x1: width / 2, y1: height - 57, x2: width / 2, y2: 51 };
+    for (let level = 4; level <= 40; level += 1) {
+      for (const pair of makePortals(level, width, height)) {
+        for (const point of [pair.a, pair.b]) {
+          assert.ok(
+            distanceToSegment(point, spine) >= 43,
+            `level ${level}: portal ${pair.id} is too close to the direct escape spine`,
+          );
         }
       }
     }
