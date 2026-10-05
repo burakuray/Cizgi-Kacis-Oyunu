@@ -50,6 +50,8 @@ import {
   type LifeLossResult,
   clamp,
   distanceToSegment,
+  distanceBetweenSegments,
+  segmentHitsObstacle,
   getDifficultyProfile,
   makeCourse,
   makeBouncyBarriers,
@@ -386,6 +388,12 @@ export default function GameScreen() {
         x: current.x + velocityRef.current.x * delta,
         y: current.y + velocityRef.current.y * delta,
       };
+      const movementSegment = {
+        x1: current.x,
+        y1: current.y,
+        x2: rawNext.x,
+        y2: rawNext.y,
+      };
       const friction = Math.pow(0.992, delta);
       let nextVelocity = {
         x: velocityRef.current.x * friction,
@@ -405,6 +413,19 @@ export default function GameScreen() {
       }
       velocityRef.current = nextVelocity;
       const activeMovingBars = renderedMovingBars(movingBarBlueprints, elapsed);
+      const activeObstacles = [...course, ...bouncyBarriers, ...activeMovingBars];
+
+      // Continuous collision detection: test the whole movement from the
+      // previous position to the next one. Point-only checks allow the stone
+      // to tunnel through thin barriers at higher speeds.
+      const crossedObstacle = activeObstacles.find((obstacle) =>
+        segmentHitsObstacle(current, next, obstacle, STONE_RADIUS + 3),
+      );
+      if (crossedObstacle) {
+        finishAttempt(false, current);
+        return;
+      }
+
       const bounce = bounceFromBarriers(next, nextVelocity, bouncyBarriers);
       if (bounce.bounced) {
         next.x = bounce.point.x;
@@ -418,7 +439,7 @@ export default function GameScreen() {
         frameRef.current = requestAnimationFrame(tick);
         return;
       }
-      const nearestObstacle = [...course, ...bouncyBarriers, ...activeMovingBars].reduce(
+      const nearestObstacle = activeObstacles.reduce(
         (nearest, segment) => Math.min(nearest, distanceToSegment(next, segment)),
         Number.POSITIVE_INFINITY,
       );
@@ -427,7 +448,7 @@ export default function GameScreen() {
         riskBonusRef.current = currentRiskBonus;
         setRiskBonus(currentRiskBonus);
       }
-      const portalStep = resolvePortalStep(next, portals, portalLockRef.current, [...course, ...bouncyBarriers, ...activeMovingBars]);
+      const portalStep = resolvePortalStep(next, portals, portalLockRef.current, activeObstacles);
       const collided = portalStep.collided;
       const reachedGoal = Math.hypot(next.x - goal.x, next.y - goal.y) < 26;
 
