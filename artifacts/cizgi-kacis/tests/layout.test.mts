@@ -9,6 +9,9 @@ import {
   makeBouncyBarriers,
   makeCourse,
   makeMovingBars,
+  makeMovingThorns,
+  positionGoal,
+  renderedMovingThorns,
   makePortals,
 } from '../game-logic.ts';
 import { PORTAL_COLORS, buildStaticArt, goalArt, legendArt, mix, opToSvg, stoneArt, thornOps, type Palette } from '../lib/boardArt.ts';
@@ -114,6 +117,28 @@ test('levels 3+ never leave a clean one-launch path from the stone to the exit',
       assert.ok(
         isDirectEscapeBlocked(origin, goal, obstacles),
         `level ${level} ${width}x${height}: direct start-to-exit path is still open`,
+      );
+    }
+  }
+});
+
+test('advanced levels animate the exit and thorn obstacles while early levels stay stable', () => {
+  for (const { width, height } of BOARDS) {
+    assert.deepEqual(positionGoal(6, width, height, 4), { x: width / 2, y: 51 });
+    assert.notDeepEqual(positionGoal(7, width, height, 0), positionGoal(7, width, height, 2));
+
+    assert.equal(makeMovingThorns(4, width, height).length, 0);
+    for (let level = 5; level <= 40; level += 1) {
+      const blueprints = makeMovingThorns(level, width, height);
+      assert.ok(blueprints.length >= 1, `level ${level}: expected moving thorn(s)`);
+      const atZero = renderedMovingThorns(blueprints, 0);
+      const later = renderedMovingThorns(blueprints, 2.7);
+      assert.equal(atZero.length, later.length);
+      assert.ok(
+        atZero.some((segment, index) =>
+          Math.hypot(segment.x1 - later[index].x1, segment.y1 - later[index].y1) > 0.5,
+        ),
+        `level ${level}: moving thorns never changed position`,
       );
     }
   }
