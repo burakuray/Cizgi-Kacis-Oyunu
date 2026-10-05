@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   HOLE_RADIUS,
   isDirectEscapeBlocked,
+  segmentHitsObstacle,
   distanceToSegment,
   makeBouncyBarriers,
   makeCourse,
@@ -72,6 +73,27 @@ test('static thorn bars and moving bars do not overlap each other', () => {
   }
 });
 
+
+test('continuous movement detects thin barriers between frames', () => {
+  const thinBarrier = { x1: 100, y1: 100, x2: 100, y2: 220 };
+  assert.equal(
+    segmentHitsObstacle({ x: 80, y: 150 }, { x: 120, y: 150 }, thinBarrier, STONE_RADIUS + 3),
+    true,
+  );
+  assert.equal(
+    segmentHitsObstacle({ x: 80, y: 150 }, { x: 90, y: 150 }, thinBarrier, STONE_RADIUS + 3),
+    false,
+  );
+});
+
+test('direct escape validation is geometric, not hard-coded for vertical boards', () => {
+  const origin = { x: 180, y: 463 };
+  const goal = { x: 180, y: 51 };
+  const blockingGate = { x1: 120, y1: 250, x2: 240, y2: 250 };
+  const sideBarrier = { x1: 40, y1: 250, x2: 100, y2: 250 };
+  assert.equal(isDirectEscapeBlocked(origin, goal, [blockingGate]), true);
+  assert.equal(isDirectEscapeBlocked(origin, goal, [sideBarrier]), false);
+});
 
 test('levels 3+ never leave a clean one-launch path from the stone to the exit', () => {
   for (const { width, height } of BOARDS) {
