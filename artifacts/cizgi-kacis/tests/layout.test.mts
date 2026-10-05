@@ -5,6 +5,7 @@ import {
   isDirectEscapeBlocked,
   segmentHitsObstacle,
   distanceToSegment,
+  distanceBetweenSegments,
   makeBouncyBarriers,
   makeCourse,
   makeMovingBars,
@@ -137,37 +138,35 @@ test('portals are useful shortcuts: reachable entry, forward exit, real obstacle
       for (const pair of makePortals(level, width, height)) {
         const progress = pair.a.y - pair.b.y;
         const span = { x1: pair.a.x, y1: pair.a.y, x2: pair.b.x, y2: pair.b.y };
-        const bypassed = obstacles.filter((obstacle) => distanceToSegment({ x: span.x1, y: span.y1 }, obstacle) <= 0).length
-          + obstacles.filter((obstacle) => {
-            const minDistance = Math.min(
-              distanceToSegment({ x: span.x1, y: span.y1 }, obstacle),
-              distanceToSegment({ x: span.x2, y: span.y2 }, obstacle),
-            );
-            return minDistance <= 0;
-          }).length;
+        const bypassed = obstacles.filter(
+          (obstacle) => distanceBetweenSegments(span, obstacle) <= 13 + 8,
+        ).length;
 
         assert.ok(
           !isDirectEscapeBlocked(start, pair.a, obstacles),
           `level ${level}: portal ${pair.id} entry is not directly reachable from start`,
         );
-        assert.ok(progress >= Math.max(100, height * 0.20), `level ${level}: portal ${pair.id} does not move the player forward`);
-        assert.ok(Math.hypot(pair.a.x - pair.b.x, pair.a.y - pair.b.y) >= Math.max(140, height * 0.30), `level ${level}: portal ${pair.id} endpoints are too close`);
+        assert.ok(
+          progress >= Math.max(100, height * 0.20),
+          `level ${level}: portal ${pair.id} does not move the player forward`,
+        );
+        assert.ok(
+          Math.hypot(pair.a.x - pair.b.x, pair.a.y - pair.b.y) >= Math.max(140, height * 0.30),
+          `level ${level}: portal ${pair.id} endpoints are too close`,
+        );
         assert.ok(
           isDirectEscapeBlocked(pair.b, goal, obstacles),
           `level ${level}: portal ${pair.id} exit makes the level an instant win`,
         );
         assert.ok(
-          obstacles.some((obstacle) => {
-            const a = { x1: pair.a.x, y1: pair.a.y, x2: pair.b.x, y2: pair.b.y };
-            return distanceToSegment({ x: (a.x1 + a.x2) / 2, y: (a.y1 + a.y2) / 2 }, obstacle) < 120;
-          }),
-          `level ${level}: portal ${pair.id} is not positioned around the obstacle field`,
+          bypassed >= 1,
+          `level ${level}: portal ${pair.id} does not bypass an obstacle`,
         );
-        void bypassed;
       }
     }
   }
 });
+
 
 test('portal endpoints stay away from the direct start-to-exit spine', () => {
   for (const { width, height } of BOARDS) {
