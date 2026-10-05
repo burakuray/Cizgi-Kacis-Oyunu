@@ -50,7 +50,6 @@ import {
   type LifeLossResult,
   clamp,
   distanceToSegment,
-  distanceBetweenSegments,
   segmentHitsObstacle,
   getDifficultyProfile,
   makeCourse,
