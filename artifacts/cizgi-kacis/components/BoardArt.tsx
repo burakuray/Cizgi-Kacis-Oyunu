@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react';
 import { StyleSheet, View } from 'react-native';
 import Svg, { Circle, Defs, Ellipse, Line, Path, RadialGradient, Stop, Text as SvgText } from 'react-native-svg';
-import type { MovingBar, Point, PortalPair, Segment } from '@/game-logic';
+import type { MovingBar, MovingThorn, Point, PortalPair, Segment } from '@/game-logic';
 import {
   type Art,
   LEGEND_SIZE,
@@ -14,6 +14,8 @@ import {
   ghostOps,
   legendArt,
   movingBarOps,
+  goalArt,
+  thornOps,
   stoneArt,
   trailOps,
 } from '@/lib/boardArt';
@@ -63,7 +65,10 @@ type BoardArtProps = {
   movingBlueprints: MovingBar[];
   /** Moving bars at their current position (changes every frame). */
   movingBars: Segment[];
+  movingThorns: Segment[];
+  movingThornBlueprints: MovingThorn[];
   goal: Point;
+  movingGoal?: boolean;
   origin: Point;
   chapterId?: string;
   level?: number;
@@ -82,13 +87,15 @@ export function BoardArt(props: BoardArtProps) {
   const { width, height, palette, exitLabel, course, bouncy, portals, movingBlueprints, goal, origin, chapterId, level } = props;
   const paletteKey = Object.values(palette).join('|');
   const staticArt = useMemo(
-    () => buildStaticArt({ width, height, course, bouncy, portals, movingBlueprints, goal, origin, exitLabel, chapterId, level }, palette),
+    () => buildStaticArt({ width, height, course, bouncy, portals, movingBlueprints, goal, origin, exitLabel, chapterId, level, renderGoal: !props.movingGoal }, palette),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [width, height, course, bouncy, portals, movingBlueprints, goal, origin, exitLabel, chapterId, level, paletteKey],
+    [width, height, course, bouncy, portals, movingBlueprints, goal, origin, exitLabel, chapterId, level, paletteKey, props.movingGoal],
   );
   const dynamic: Op[] = [
     ...(props.ghost.length > 1 ? ghostOps(props.ghost, palette.obstacle) : []),
     ...props.movingBars.flatMap((bar) => movingBarOps(bar, palette)),
+    ...props.movingThorns.flatMap((bar) => thornOps(bar, palette.obstacle)),
+    ...(props.movingGoal ? goalArt(goal, exitLabel, palette).ops : []),
     ...(props.aim ? aimOps(props.aim.from, props.aim.to, palette.stoneHighlight) : []),
     ...trailOps(props.trail, props.stoneColor),
   ];
