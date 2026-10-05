@@ -55,6 +55,10 @@ import {
   makeCourse,
   makeBouncyBarriers,
   makeMovingBars,
+  makeMovingThorns,
+  renderedMovingThorns,
+  staticCourseWithoutMovingThorns,
+  positionGoal,
   makePortals,
   renderedMovingBars,
   resolveLifeLoss,
@@ -167,13 +171,28 @@ export default function GameScreen() {
     () => makeMovingBars(level, board.width, board.height),
     [level, board.height, board.width],
   );
+  const movingThornBlueprints = useMemo(
+    () => makeMovingThorns(level, board.width, board.height),
+    [level, board.height, board.width],
+  );
+  const staticCourse = useMemo(
+    () => staticCourseWithoutMovingThorns(course, movingThornBlueprints),
+    [course, movingThornBlueprints],
+  );
   const movingBars = useMemo(
     () => renderedMovingBars(movingBarBlueprints, motionTime),
     [movingBarBlueprints, motionTime],
   );
+  const movingThorns = useMemo(
+    () => renderedMovingThorns(movingThornBlueprints, motionTime),
+    [movingThornBlueprints, motionTime],
+  );
+  const goal = useMemo(
+    () => positionGoal(level, board.width, board.height, motionTime),
+    [level, board.height, board.width, motionTime],
+  );
   const portals = useMemo(() => makePortals(level, board.width, board.height), [level, board.height, board.width]);
   const origin = useMemo(() => ({ x: board.width / 2, y: board.height - 57 }), [board.width, board.height]);
-  const goal = useMemo(() => ({ x: board.width / 2, y: 51 }), [board.width]);
   const [launchPoint, setLaunchPoint] = useState<Point>(origin);
   const launchPointRef = useRef(launchPoint);
 
@@ -406,7 +425,8 @@ export default function GameScreen() {
       }
       velocityRef.current = nextVelocity;
       const activeMovingBars = renderedMovingBars(movingBarBlueprints, elapsed);
-      const activeObstacles = [...course, ...bouncyBarriers, ...activeMovingBars];
+      const activeMovingThorns = renderedMovingThorns(movingThornBlueprints, elapsed);
+      const activeObstacles = [...course, ...bouncyBarriers, ...activeMovingBars, ...activeMovingThorns];
 
       // Continuous collision detection: test the whole movement from the
       // previous position to the next one. Point-only checks allow the stone
@@ -483,7 +503,7 @@ export default function GameScreen() {
     return () => {
       if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
     };
-  }, [board.height, board.width, bouncyBarriers, course, finishAttempt, goal, movingBarBlueprints, phase, portals]);
+  }, [board.height, board.width, bouncyBarriers, course, finishAttempt, goal, movingBarBlueprints, movingThornBlueprints, phase, portals]);
 
   useEffect(() => {
     if (phase !== 'complete') return;
@@ -793,12 +813,15 @@ export default function GameScreen() {
           height={board.height}
           palette={artPalette}
           exitLabel={t('exit')}
-          course={course}
+          course={staticCourse}
           bouncy={bouncyBarriers}
           portals={portals}
           movingBlueprints={movingBarBlueprints}
           movingBars={movingBars}
+          movingThorns={movingThorns}
+          movingThornBlueprints={movingThornBlueprints}
           goal={goal}
+          movingGoal={level >= 7}
           origin={origin}
           chapterId={chapter.id}
           level={level}
