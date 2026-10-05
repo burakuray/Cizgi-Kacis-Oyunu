@@ -438,27 +438,35 @@ export function makePortals(level: number, width: number, height: number): Porta
   const bounds: PlacementBounds = {
     minX: HOLE_RADIUS + 16,
     maxX: width - HOLE_RADIUS - 16,
-    minY: usableTop + 50,
-    maxY: usableBottom - 30,
+    minY: usableTop + 34,
+    maxY: usableBottom - 24,
   };
   const fixedBars = [...makeCourse(level, width, height), ...makeBouncyBarriers(level, width, height)];
   const sweeps = makeMovingBars(level, width, height).map(sweptSegment);
-  const placed: Point[] = [];
+  const obstacles = [...fixedBars, ...sweeps];
+  const startPoint = { x: width / 2, y: height - 57 };
+  const goalPoint = { x: width / 2, y: 51 };
   const directEscapeLine: Segment = {
-    x1: width / 2,
-    y1: height - 57,
-    x2: width / 2,
-    y2: 51,
+    x1: startPoint.x,
+    y1: startPoint.y,
+    x2: goalPoint.x,
+    y2: goalPoint.y,
   };
   const DIRECT_SPINE_CLEARANCE = 44;
-  const goalPoint = { x: width / 2, y: 51 };
-  const obstacles = [...fixedBars, ...sweeps];
+  const MIN_PORTAL_PROGRESS = Math.max(110, height * 0.22);
+  const MIN_PAIR_DISTANCE = Math.max(150, height * 0.32);
+  const MIN_ENTRY_DISTANCE_FROM_START = 95;
 
-  const isValidPortalPoint = (candidate: Point, safePoints: Point[]) => {
+  const placed: Point[] = [];
+
+  const pointIsSafe = (candidate: Point, safePoints: Point[]) => {
     const minBarrierClearance = clearanceTo(candidate, fixedBars);
     const minSweepClearance = sweeps.length > 0 ? clearanceTo(candidate, sweeps) : Infinity;
-    const minGap = safePoints.reduce((nearest, other) => Math.min(nearest, Math.hypot(candidate.x - other.x, candidate.y - other.y)), Infinity);
-    const directShotBlocked = isDirectEscapeBlocked(candidate, goalPoint, obstacles);
+    const minGap = safePoints.reduce(
+      (nearest, other) => Math.min(nearest, Math.hypot(candidate.x - other.x, candidate.y - other.y)),
+      Infinity,
+    );
+
     return (
       candidate.x >= bounds.minX &&
       candidate.x <= bounds.maxX &&
@@ -467,72 +475,101 @@ export function makePortals(level: number, width: number, height: number): Porta
       minBarrierClearance >= HOLE_RADIUS + 8 &&
       minSweepClearance >= HOLE_RADIUS + 8 &&
       distanceToSegment(candidate, directEscapeLine) >= DIRECT_SPINE_CLEARANCE &&
-      directShotBlocked &&
       minGap >= HOLE_RADIUS * 2 + 18
     );
   };
 
-  const scorePortalPoint = (candidate: Point, anchor: Point) => {
-    const dist = Math.hypot(candidate.x - anchor.x, candidate.y - anchor.y);
-    return Math.min(
-      clearanceTo(candidate, fixedBars),
-      distanceToSegment(candidate, directEscapeLine),
-      dist,
-    );
+  // Portals are a player advantage, so the entry must be realistically reachable
+  // from the launch point. Otherwise a portal can exist visually but never become
+  // a meaningful part of the solution.
+  const entryIsUseful = (entry: Point) =>
+    Math.hypot(entry.x - startPoint.x, entry.y - startPoint.y) >= MIN_ENTRY_DISTANCE_FROM_START &&
+    !isDirectEscapeBlocked(startPoint, entry, obstacles);
+
+  // The exit should still require play after teleporting. This keeps the portal
+  // useful without turning it into an instant win.
+  const exitIsUseful = (exit: Point) =>
+    isDirectEscapeBlocked(exit, goalPoint, obstacles) &&
+    Math.hypot(exit.x - goalPoint.x, exit.y - goalPoint.y) >= 90;
+
+  const obstacleBypassValue = (entry: Point, exit: Point) => {
+    const teleportSpan: Segment = {
+      x1: entry.x,
+      y1: entry.y,
+      x2: exit.x,
+      y2: exit.y,
+    };
+    return obstacles.filter(
+      (obstacle) => segmentDistance(teleportSpan, obstacle) <= STONE_RADIUS + 8,
+    ).length;
   };
 
-  const chooseBest = (anchor: Point, taken: Point[], preferredSide?: 'left' | 'right') => {
+  const buildCandidates = (minY: number, maxY: number, requireEntry: boolean, requireExit: boolean) => {
     const candidates: Point[] = [];
-    const xMin = bounds.minX;
-    const xMax = bounds.maxX;
-
-    for (let x = xMin; x <= xMax; x += 6) {
-      for (let y = bounds.minY; y <= bounds.maxY; y += 6) {
+    for (let y = minY; y <= maxY; y += 12) {
+      for (let x = bounds.minX; x <= bounds.maxX; x += 12) {
         const candidate = { x, y };
-        if (!isValidPortalPoint(candidate, taken)) continue;
-        if (preferredSide === 'left' && candidate.x >= width / 2) continue;
-        if (preferredSide === 'right' && candidate.x < width / 2) continue;
+        if (!pointIsSafe(candidate, placed)) continue;
+        if (requireEntry && !entryIsUseful(candidate)) continue;
+        if (requireExit && !exitIsUseful(candidate)) continue;
         candidates.push(candidate);
       }
     }
+    return candidates;
+  };
 
-    if (candidates.length === 0) {
-      for (let radius = 0; radius <= 230; radius += 8) {
-        for (let step = 0; step < 36; step += 1) {
-          const angle = (step / 36) * Math.PI * 2;
-          const candidate = {
-            x: clamp(anchor.x + Math.cos(angle) * radius, bounds.minX, bounds.maxX),
-            y: clamp(anchor.y + Math.sin(angle) * radius, bounds.minY, bounds.maxY),
-          };
-          if (isValidPortalPoint(candidate, taken)) {
-            candidates.push(candidate);
-          }
+  const pairs: PortalPair[] = [];
+
+  for (let index = 0; index < portalPairCount; index += 1) {
+    const entries = buildCandidates(
+      Math.max(bounds.minY, usableTop + 150 - index * 20),
+      Math.min(bounds.maxY, usableBottom - 25),
+      true,
+      false,
+    );
+    const exits = buildCandidates(
+      bounds.minY,
+      Math.min(bounds.maxY, usableBottom - 150 + index * 20),
+      false,
+      true,
+    );
+
+    let best: { entry: Point; exit: Point; score: number; bypass: number } | null = null;
+
+    for (const entry of entries) {
+      for (const exit of exits) {
+        const progress = entry.y - exit.y;
+        const pairDistance = Math.hypot(entry.x - exit.x, entry.y - exit.y);
+        if (progress < MIN_PORTAL_PROGRESS || pairDistance < MIN_PAIR_DISTANCE) continue;
+
+        const bypass = obstacleBypassValue(entry, exit);
+        if (bypass < 1) continue;
+
+        // Prioritise real progress and bypassed obstacles. A small preference for
+        // lateral movement makes portals feel like deliberate shortcuts rather
+        // than two random holes placed on the same vertical lane.
+        const lateral = Math.abs(entry.x - exit.x);
+        const score =
+          progress * 2.2 +
+          bypass * 95 +
+          Math.min(lateral, width * 0.35) * 0.45 -
+          Math.abs(pairDistance - height * 0.48) * 0.18;
+
+        if (!best || score > best.score) {
+          best = { entry, exit, score, bypass };
         }
       }
     }
 
-    if (candidates.length === 0) return null;
+    if (!best) continue;
 
-    return candidates.sort((a, b) => scorePortalPoint(b, anchor) - scorePortalPoint(a, anchor))[0];
-  };
-
-  const pairs: PortalPair[] = [];
-  for (let index = 0; index < portalPairCount; index += 1) {
-    const leftAnchor = { x: width * 0.22, y: usableTop + 100 + index * 74 };
-    const rightAnchor = { x: width * 0.78, y: usableBottom - 70 - index * 74 };
-    const left = chooseBest(leftAnchor, placed, 'left') ?? chooseBest(leftAnchor, placed);
-    if (!left) continue;
-
-    const rightTaken = [...placed, left];
-    const right = chooseBest(rightAnchor, rightTaken, 'right') ?? chooseBest(rightAnchor, rightTaken);
-    if (!right) continue;
-
-    placed.push(left, right);
+    placed.push(best.entry, best.exit);
     pairs.push({
       id: `portal-${level}-${index}`,
       label: String.fromCharCode(65 + index),
-      a: left,
-      b: right,
+      // a is the reachable/entry side; b is the forward/exit side.
+      a: best.entry,
+      b: best.exit,
     });
   }
 
