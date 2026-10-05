@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react';
 import { StyleSheet, View } from 'react-native';
 import Svg, { Circle, Defs, Ellipse, Line, Path, RadialGradient, Stop, Text as SvgText } from 'react-native-svg';
-import type { MovingBar, MovingThorn, Point, PortalPair, Segment } from '@/game-logic';
+import type { MovingBar, Point, PortalPair, Segment } from '@/game-logic';
 import {
   type Art,
   LEGEND_SIZE,
@@ -66,7 +66,6 @@ type BoardArtProps = {
   /** Moving bars at their current position (changes every frame). */
   movingBars: Segment[];
   movingThorns: Segment[];
-  movingThornBlueprints: MovingThorn[];
   goal: Point;
   movingGoal?: boolean;
   origin: Point;
