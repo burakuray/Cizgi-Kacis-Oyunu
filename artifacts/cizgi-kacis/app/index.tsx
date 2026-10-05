@@ -387,12 +387,6 @@ export default function GameScreen() {
         x: current.x + velocityRef.current.x * delta,
         y: current.y + velocityRef.current.y * delta,
       };
-      const movementSegment = {
-        x1: current.x,
-        y1: current.y,
-        x2: rawNext.x,
-        y2: rawNext.y,
-      };
       const friction = Math.pow(0.992, delta);
       let nextVelocity = {
         x: velocityRef.current.x * friction,
