@@ -252,6 +252,7 @@ export type StaticInput = {
   exitLabel: string;
   chapterId?: string;
   level?: number;
+  renderGoal?: boolean;
 };
 
 /** Everything that does not move during a level. Build once per level, not once per frame. */
@@ -267,9 +268,11 @@ export function buildStaticArt(input: StaticInput, p: Palette): Art {
     defs.push(...art.defs);
     ops.push(...art.ops);
   });
-  const goal = goalArt(input.goal, input.exitLabel, p);
-  defs.push(...goal.defs);
-  ops.push(...goal.ops);
+  if (input.renderGoal !== false) {
+    const goal = goalArt(input.goal, input.exitLabel, p);
+    defs.push(...goal.defs);
+    ops.push(...goal.ops);
+  }
   input.course.forEach((seg) => ops.push(...thornOps(seg, p.obstacle)));
   input.bouncy.forEach((seg) => ops.push(...bouncyOps(seg, p)));
   return { defs, ops };
