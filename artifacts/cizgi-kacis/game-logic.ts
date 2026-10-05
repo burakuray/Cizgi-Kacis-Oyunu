@@ -125,8 +125,23 @@ function segmentDistance(a: Segment, b: Segment) {
 
 export function isDirectEscapeBlocked(origin: Point, goal: Point, obstacles: Segment[], padding = STONE_RADIUS + 4) {
   const escapeLine: Segment = { x1: origin.x, y1: origin.y, x2: goal.x, y2: goal.y };
-  if (Math.abs(origin.x - goal.x) < 0.5 && Math.abs(origin.y - goal.y) > 20) return true;
   return obstacles.some((obstacle) => segmentDistance(escapeLine, obstacle) <= padding);
+}
+
+export function distanceBetweenSegments(a: Segment, b: Segment) {
+  return segmentDistance(a, b);
+}
+
+export function segmentHitsObstacle(
+  from: Point,
+  to: Point,
+  obstacle: Segment,
+  padding = STONE_RADIUS + 3,
+) {
+  return distanceBetweenSegments(
+    { x1: from.x, y1: from.y, x2: to.x, y2: to.y },
+    obstacle,
+  ) <= padding;
 }
 
 
