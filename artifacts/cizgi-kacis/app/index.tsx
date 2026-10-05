@@ -819,7 +819,6 @@ export default function GameScreen() {
           movingBlueprints={movingBarBlueprints}
           movingBars={movingBars}
           movingThorns={movingThorns}
-          movingThornBlueprints={movingThornBlueprints}
           goal={goal}
           movingGoal={level >= 7}
           origin={origin}
