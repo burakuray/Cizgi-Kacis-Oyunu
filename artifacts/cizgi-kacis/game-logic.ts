@@ -9,6 +9,14 @@ export type MovingBar = {
   speed: number;
   phase: number;
 };
+export type MovingThorn = {
+  segment: Segment;
+  axis: 'x' | 'y';
+  travel: number;
+  speed: number;
+  phase: number;
+};
+
 export type PortalPair = { id: string; a: Point; b: Point; label: string };
 
 export const STONE_RADIUS = 13;
@@ -403,6 +411,62 @@ export function makeMovingBars(level: number, width: number, height: number): Mo
   }
 
   return bars;
+}
+
+export function makeMovingThorns(level: number, width: number, height: number): MovingThorn[] {
+  if (level < 5) return [];
+
+  const course = makeCourse(level, width, height);
+  const count = Math.min(3, Math.floor((level - 3) / 3));
+  const candidates = course
+    .map((segment, index) => ({ segment, index }))
+    .filter(({ segment }) => Math.hypot(segment.x2 - segment.x1, segment.y2 - segment.y1) >= 54);
+
+  const thorns: MovingThorn[] = [];
+  for (let i = 0; i < count && candidates.length > 0; i += 1) {
+    const pick = (level * 7 + i * 11) % candidates.length;
+    const { segment } = candidates[pick];
+    candidates.splice(pick, 1);
+    const horizontal = Math.abs(segment.x2 - segment.x1) >= Math.abs(segment.y2 - segment.y1);
+    thorns.push({
+      segment,
+      axis: horizontal ? 'y' : 'x',
+      travel: 10 + ((level * 13 + i * 17) % 18),
+      speed: 0.75 + ((level * 5 + i * 7) % 8) * 0.09,
+      phase: ((level * 19 + i * 31) % 360) * Math.PI / 180,
+    });
+  }
+  return thorns;
+}
+
+export function renderedMovingThorns(blueprints: MovingThorn[], time: number): Segment[] {
+  return blueprints.map((thorn) => {
+    const offset = Math.sin(time * thorn.speed + thorn.phase) * thorn.travel;
+    return thorn.axis === 'x'
+      ? { x1: thorn.segment.x1 + offset, y1: thorn.segment.y1, x2: thorn.segment.x2 + offset, y2: thorn.segment.y2 }
+      : { x1: thorn.segment.x1, y1: thorn.segment.y1 + offset, x2: thorn.segment.x2, y2: thorn.segment.y2 + offset };
+  });
+}
+
+export function staticCourseWithoutMovingThorns(course: Segment[], thorns: MovingThorn[]): Segment[] {
+  return course.filter((segment) => !thorns.some((thorn) =>
+    thorn.segment.x1 === segment.x1 &&
+    thorn.segment.y1 === segment.y1 &&
+    thorn.segment.x2 === segment.x2 &&
+    thorn.segment.y2 === segment.y2,
+  ));
+}
+
+export function positionGoal(level: number, width: number, height: number, time: number): Point {
+  const profile = getDifficultyProfile(level);
+  if (level < 7) return { x: width / 2, y: 51 };
+  const travelX = Math.min(width * 0.22, 34 + level * 2.2);
+  const travelY = Math.min(height * 0.08, 10 + level * 0.8);
+  const phase = level * 0.71;
+  return {
+    x: width / 2 + Math.sin(time * (0.55 + profile.movingBarSpeed * 0.08) + phase) * travelX,
+    y: 51 + Math.sin(time * 0.43 + phase * 1.7) * travelY,
+  };
 }
 
 export function positionMovingBar(bar: MovingBar, time: number): Segment {
