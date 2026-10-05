@@ -419,7 +419,7 @@ export function makeMovingThorns(level: number, width: number, height: number): 
   const course = makeCourse(level, width, height);
   const count = Math.min(3, Math.floor((level - 3) / 3));
   const candidates = course
-    .map((segment, index) => ({ segment, index }))
+    .map((segment) => ({ segment }))
     .filter(({ segment }) => Math.hypot(segment.x2 - segment.x1, segment.y2 - segment.y1) >= 54);
 
   const thorns: MovingThorn[] = [];
