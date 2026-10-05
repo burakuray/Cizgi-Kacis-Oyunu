@@ -426,7 +426,7 @@ export default function GameScreen() {
       velocityRef.current = nextVelocity;
       const activeMovingBars = renderedMovingBars(movingBarBlueprints, elapsed);
       const activeMovingThorns = renderedMovingThorns(movingThornBlueprints, elapsed);
-      const activeObstacles = [...course, ...bouncyBarriers, ...activeMovingBars, ...activeMovingThorns];
+      const activeObstacles = [...staticCourse, ...bouncyBarriers, ...activeMovingBars, ...activeMovingThorns];
 
       // Continuous collision detection: test the whole movement from the
       // previous position to the next one. Point-only checks allow the stone
@@ -503,7 +503,7 @@ export default function GameScreen() {
     return () => {
       if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
     };
-  }, [board.height, board.width, bouncyBarriers, course, finishAttempt, goal, movingBarBlueprints, movingThornBlueprints, phase, portals]);
+  }, [board.height, board.width, bouncyBarriers, course, finishAttempt, goal, movingBarBlueprints, movingThornBlueprints, phase, portals, staticCourse]);
 
   useEffect(() => {
     if (phase !== 'complete') return;
