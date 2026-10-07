@@ -4,6 +4,8 @@
  */
 import type { MovingBar, Point, PortalPair, Segment } from '../game-logic.ts';
 import { HOLE_RADIUS, STONE_RADIUS } from '../game-logic.ts';
+import type { EraserRect, Hazards, Magnet, PencilBar, Puddle, Stain, TearBar } from './mechanics.ts';
+import { rng } from './mechanics.ts';
 
 export type Palette = {
   obstacle: string;
@@ -20,12 +22,14 @@ export type Op =
   | { k: 'line'; x1: number; y1: number; x2: number; y2: number; stroke: string; sw: number; o?: number; cap?: 'round' | 'butt'; dash?: string }
   | { k: 'path'; d: string; fill?: string; stroke?: string; sw?: number; o?: number; cap?: 'round' | 'butt'; join?: 'round' | 'miter'; dash?: string }
   | { k: 'circle'; cx: number; cy: number; r: number; fill?: string; stroke?: string; sw?: number; o?: number; dash?: string }
+  | { k: 'rect'; x: number; y: number; w: number; h: number; rx?: number; fill: string; o?: number }
   | { k: 'ellipse'; cx: number; cy: number; rx: number; ry: number; fill?: string; o?: number }
   | { k: 'text'; x: number; y: number; s: string; fill: string; size: number; weight?: string; o?: number };
 
 export type GradStop = { o: number; c: string; a?: number };
-export type Grad = { id: string; stops: GradStop[]; cx?: number; cy?: number; r?: number };
-export type Art = { defs: Grad[]; ops: Op[] };
+export type Grad = { id: string; stops: GradStop[]; cx?: number; cy?: number; r?: number; units?: 'user' };
+/** `revealFrom`: ops before this index are always visible; the rest are "drawn" one by one during the level intro. */
+export type Art = { defs: Grad[]; ops: Op[]; revealFrom?: number };
 
 export const PORTAL_COLORS = ['#B79BFF', '#8FD3FF', '#FFD5A6'];
 export const STONE_BOX = STONE_RADIUS * 2 + 14;
@@ -152,15 +156,20 @@ export function portalArt(pair: PortalPair, index: number, p: Palette): Art {
     { k: 'line', x1: pair.a.x, y1: pair.a.y, x2: pair.b.x, y2: pair.b.y, stroke: color, sw: 1.4, o: 0.16, cap: 'round', dash: '1 7' },
   ];
   [pair.a, pair.b].forEach((end, side) => {
+    const entrance = side === 0;
     ops.push(
-      { k: 'circle', cx: end.x, cy: end.y, r: 32, fill: `url(#${gradId})` },
-      { k: 'circle', cx: end.x, cy: end.y, r: HOLE_RADIUS, fill: p.background, stroke: color, sw: 2.4, o: 0.95 },
+      { k: 'circle', cx: end.x, cy: end.y, r: 32, fill: `url(#${gradId})`, o: entrance ? 1 : 0.7 },
+      { k: 'circle', cx: end.x, cy: end.y, r: HOLE_RADIUS, fill: p.background, stroke: color, sw: entrance ? 2.6 : 2, o: 0.95, dash: entrance ? undefined : '4 3' },
       { k: 'circle', cx: end.x, cy: end.y, r: HOLE_RADIUS - 5, stroke: color, sw: 1, o: 0.3 },
-      { k: 'path', d: spiral(end.x, end.y, 2, 11.5, 0.85, 0, side === 0 ? 1 : -1), stroke: color, sw: 1.9, cap: 'round', join: 'round' },
-      { k: 'path', d: spiral(end.x, end.y, 2, 11.5, 0.85, Math.PI, side === 0 ? 1 : -1), stroke: color, sw: 1.9, cap: 'round', join: 'round', o: 0.7 },
+      // entrance spirals inwards; the exit spirals outwards and shows an arrow: "you come out here, moving on"
+      { k: 'path', d: spiral(end.x, end.y, 2, 11.5, 0.85, 0, entrance ? 1 : -1), stroke: color, sw: 1.9, cap: 'round', join: 'round' },
+      { k: 'path', d: spiral(end.x, end.y, 2, 11.5, 0.85, Math.PI, entrance ? 1 : -1), stroke: color, sw: 1.9, cap: 'round', join: 'round', o: 0.7 },
       { k: 'circle', cx: end.x, cy: end.y, r: 2, fill: color },
-      { k: 'text', x: end.x, y: end.y - HOLE_RADIUS - 6, s: label, fill: color, size: 9, weight: '800' },
+      { k: 'text', x: end.x, y: end.y + HOLE_RADIUS + 12, s: entrance ? `${label}` : `${label}↑`, fill: color, size: 9, weight: '800' },
     );
+    if (!entrance) {
+      ops.push({ k: 'path', d: `M${f(end.x - 6)} ${f(end.y - HOLE_RADIUS - 5)}L${f(end.x)} ${f(end.y - HOLE_RADIUS - 12)}L${f(end.x + 6)} ${f(end.y - HOLE_RADIUS - 5)}`, stroke: color, sw: 2.2, cap: 'round', join: 'round' });
+    }
   });
   return { defs: [{ id: gradId, cx: 0.5, cy: 0.5, r: 0.5, stops: [{ o: 0, c: color, a: 0.42 }, { o: 1, c: color, a: 0 }] }], ops };
 }
@@ -191,49 +200,16 @@ export function startOps(origin: Point, p: Palette): Op[] {
   ];
 }
 
-/** The page background is intentionally stripped back to chapter-specific atmosphere rather than a notebook grid. */
-export function backgroundSceneOps(width: number, height: number, chapterId: string, level: number, p: Palette): Op[] {
-  const seed = chapterId.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0) + level * 97;
-  const value = (n: number) => {
-    const x = Math.sin(seed * 12.9898 + n * 78.233) * 43758.5453;
-    return x - Math.floor(x);
-  };
-  const accentColors = [p.obstacle, p.goal, p.stoneHighlight, p.border];
-  const themes: Record<string, (i: number, c: number, r: number) => Op[]> = {
-    'first-trace': (x, y, r) => [
-      { k: 'circle', cx: x, cy: y, r, fill: accentColors[(x + y) % accentColors.length], o: 0.08 + value(y) * 0.06 },
-      { k: 'path', d: `M${f(x - r)} ${f(y + r * 0.5)}Q${f(x)} ${f(y - r * 1.4)} ${f(x + r)} ${f(y + r * 0.5)}`, stroke: accentColors[(x + y) % accentColors.length], sw: 1.4, o: 0.2, cap: 'round' },
-    ],
-    'thorn-garden': (x, y, r) => [
-      { k: 'path', d: `M${f(x - r * 0.8)} ${f(y)}Q${f(x)} ${f(y - r * 1.2)} ${f(x + r * 0.8)} ${f(y)}Q${f(x)} ${f(y + r * 1.1)} ${f(x - r * 0.8)} ${f(y)}`, fill: accentColors[0], o: 0.08 + value(y) * 0.07 },
-      { k: 'circle', cx: x, cy: y, r: r * 0.38, stroke: accentColors[0], sw: 1, o: 0.24 },
-    ],
-    'portal-room': (x, y, r) => [
-      { k: 'circle', cx: x, cy: y, r: r * 1.2, stroke: accentColors[2], sw: 1.2, o: 0.16 + value(y) * 0.08 },
-      { k: 'path', d: spiral(x, y, r * 0.4, r * 1.3, 0.9 + value(x) * 0.7, value(y) * Math.PI, 1), stroke: accentColors[1], sw: 1.1, o: 0.18 },
-    ],
-    'storm-corridor': (x, y, r) => [
-      { k: 'path', d: `M${f(x - r * 1.1)} ${f(y)}L${f(x - r * 0.3)} ${f(y - r * 0.7)}L${f(x + r * 0.2)} ${f(y)}L${f(x + r * 0.9)} ${f(y - r * 0.9)}L${f(x + r * 1.1)} ${f(y)}`, stroke: accentColors[2], sw: 1.4, o: 0.2, cap: 'round' },
-      { k: 'circle', cx: x, cy: y, r: r * 0.6, fill: accentColors[2], o: 0.05 },
-    ],
-    'erasers-shadow': (x, y, r) => [
-      { k: 'ellipse', cx: x, cy: y, rx: r * 1.5, ry: r * 0.8, fill: accentColors[0], o: 0.07 + value(y) * 0.05 },
-      { k: 'circle', cx: x, cy: y, r: r * 0.64, stroke: accentColors[3], sw: 1, o: 0.18 },
-    ],
-    'draft-pages': (x, y, r) => [
-      { k: 'path', d: `M${f(x - r)} ${f(y - r * 0.2)}Q${f(x)} ${f(y - r * 1.3)} ${f(x + r)} ${f(y)}Q${f(x)} ${f(y + r * 1.1)} ${f(x - r)} ${f(y - r * 0.2)}`, fill: accentColors[1], o: 0.06 },
-      { k: 'circle', cx: x, cy: y, r: r * 0.42, stroke: accentColors[1], sw: 1.1, o: 0.22 },
-    ],
-  };
-
-  const theme = themes[chapterId] ?? themes['first-trace'];
+/** Notebook paper: ruled lines, a margin and ring-binder punch holes. */
+export function paperOps(width: number, height: number, p: Palette): Op[] {
   const ops: Op[] = [];
-  const count = 8 + Math.max(0, Math.floor(level / 2));
-  for (let i = 0; i < count; i += 1) {
-    const cx = width * (0.14 + value(i + 2) * 0.72);
-    const cy = height * (0.16 + value(i + 7) * 0.68);
-    const r = 18 + value(i + 13) * 44;
-    ops.push(...theme(cx, cy, r));
+  for (let y = 30; y < height; y += 28) {
+    ops.push({ k: 'line', x1: 0, y1: y, x2: width, y2: y, stroke: p.gridLine, sw: 1, o: 0.55 });
+  }
+  ops.push({ k: 'line', x1: 30, y1: 0, x2: 30, y2: height, stroke: p.gridLine, sw: 1, o: 0.8 });
+  const holes = 6;
+  for (let i = 1; i <= holes; i += 1) {
+    ops.push({ k: 'circle', cx: 11, cy: (height * i) / (holes + 1), r: 3.8, fill: p.background, stroke: p.border, sw: 1, o: 0.75 });
   }
   return ops;
 }
@@ -250,32 +226,197 @@ export type StaticInput = {
   goal: Point;
   origin: Point;
   exitLabel: string;
-  chapterId?: string;
-  level?: number;
-  renderGoal?: boolean;
+  hazards?: Hazards;
+  /** When the Eraser is on the page the course is drawn per frame (so bars can vanish), not here. */
+  hideCourse?: boolean;
 };
 
 /** Everything that does not move during a level. Build once per level, not once per frame. */
 export function buildStaticArt(input: StaticInput, p: Palette): Art {
   const defs: Grad[] = [];
-  const ops: Op[] = [
-    ...backgroundSceneOps(input.width, input.height, input.chapterId ?? 'first-trace', input.level ?? 1, p),
-    ...startOps(input.origin, p),
-  ];
+  const ops: Op[] = [...paperOps(input.width, input.height, p), ...startOps(input.origin, p)];
+  const revealFrom = ops.length;
+  if (!input.hideCourse) input.course.forEach((seg) => ops.push(...thornOps(seg, p.obstacle)));
+  input.bouncy.forEach((seg) => ops.push(...bouncyOps(seg, p)));
   input.movingBlueprints.forEach((bar) => ops.push(...movingTrackOps(bar, p)));
   input.portals.forEach((pair, index) => {
     const art = portalArt(pair, index, p);
     defs.push(...art.defs);
     ops.push(...art.ops);
   });
-  if (input.renderGoal !== false) {
-    const goal = goalArt(input.goal, input.exitLabel, p);
-    defs.push(...goal.defs);
-    ops.push(...goal.ops);
+  const hazards = input.hazards;
+  if (hazards && hazards.puddles.length > 0) {
+    defs.push(PUDDLE_GRADIENT);
+    hazards.puddles.forEach((puddle) => ops.push(...puddleOps(puddle)));
   }
-  input.course.forEach((seg) => ops.push(...thornOps(seg, p.obstacle)));
-  input.bouncy.forEach((seg) => ops.push(...bouncyOps(seg, p)));
-  return { defs, ops };
+  if (hazards) hazards.magnets.forEach((magnet) => ops.push(...magnetOps(magnet)));
+  const goal = goalArt(input.goal, input.exitLabel, p);
+  defs.push(...goal.defs);
+  ops.push(...goal.ops);
+  return { defs, ops, revealFrom };
+}
+
+/* ---------- hazards ---------- */
+
+const PUDDLE_GRADIENT: Grad = { id: 'puddle-grad', cx: 0.5, cy: 0.5, r: 0.5, stops: [{ o: 0, c: '#7E5BEF', a: 0.5 }, { o: 0.8, c: '#7E5BEF', a: 0.3 }, { o: 1, c: '#7E5BEF', a: 0.05 }] };
+export const MAGNET_COLORS = { attract: '#8FD3FF', repel: '#FF8FB1' };
+
+function blobPath(cx: number, cy: number, radius: number, seed: number, points = 9): string {
+  const random = rng(seed);
+  const pts = Array.from({ length: points }, (_, i) => {
+    const angle = (i / points) * Math.PI * 2;
+    const r = radius * (0.74 + random() * 0.46);
+    return { x: cx + Math.cos(angle) * r, y: cy + Math.sin(angle) * r };
+  });
+  const mid = (a: Point, b: Point) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+  const start = mid(pts[points - 1], pts[0]);
+  let d = `M${f(start.x)} ${f(start.y)}`;
+  for (let i = 0; i < points; i += 1) {
+    const next = pts[(i + 1) % points];
+    const end = mid(pts[i], next);
+    d += `Q${f(pts[i].x)} ${f(pts[i].y)} ${f(end.x)} ${f(end.y)}`;
+  }
+  return `${d}Z`;
+}
+
+function roundRect(x: number, y: number, w: number, h: number, r: number): string {
+  return `M${f(x + r)} ${f(y)}H${f(x + w - r)}Q${f(x + w)} ${f(y)} ${f(x + w)} ${f(y + r)}V${f(y + h - r)}Q${f(x + w)} ${f(y + h)} ${f(x + w - r)} ${f(y + h)}H${f(x + r)}Q${f(x)} ${f(y + h)} ${f(x)} ${f(y + h - r)}V${f(y + r)}Q${f(x)} ${f(y)} ${f(x + r)} ${f(y)}Z`;
+}
+
+/** Sticky ink: a wobbly violet pool with bubbles. Slows the stone. */
+export function puddleOps(puddle: Puddle): Op[] {
+  const seed = Math.round(puddle.x * 7 + puddle.y * 13);
+  const random = rng(seed);
+  const ops: Op[] = [
+    { k: 'path', d: blobPath(puddle.x, puddle.y, puddle.r + 4, seed), fill: 'url(#puddle-grad)' },
+    { k: 'path', d: blobPath(puddle.x, puddle.y, puddle.r + 4, seed), stroke: '#9B7DFF', sw: 1.2, o: 0.5, dash: '2 4' },
+  ];
+  for (let i = 0; i < 4; i += 1) {
+    const angle = random() * Math.PI * 2;
+    const dist = random() * puddle.r * 0.6;
+    ops.push({ k: 'circle', cx: puddle.x + Math.cos(angle) * dist, cy: puddle.y + Math.sin(angle) * dist, r: 1.6 + random() * 2.2, stroke: '#C9B8FF', sw: 1, o: 0.55 });
+  }
+  return ops;
+}
+
+/** Magnet: pulsing field rings around a core. Blue pulls the stone in, pink pushes it away. */
+export function magnetOps(magnet: Magnet): Op[] {
+  const color = magnet.polarity === 1 ? MAGNET_COLORS.attract : MAGNET_COLORS.repel;
+  const sign = magnet.polarity === 1 ? `M${f(magnet.x - 4.5)} ${f(magnet.y)}H${f(magnet.x + 4.5)}M${f(magnet.x)} ${f(magnet.y - 4.5)}V${f(magnet.y + 4.5)}` : `M${f(magnet.x - 4.5)} ${f(magnet.y)}H${f(magnet.x + 4.5)}`;
+  return [
+    { k: 'circle', cx: magnet.x, cy: magnet.y, r: magnet.r, stroke: color, sw: 1, o: 0.14, dash: '3 7' },
+    { k: 'circle', cx: magnet.x, cy: magnet.y, r: magnet.r * 0.66, stroke: color, sw: 1, o: 0.22, dash: '3 7' },
+    { k: 'circle', cx: magnet.x, cy: magnet.y, r: magnet.r * 0.33, stroke: color, sw: 1.2, o: 0.34, dash: '3 7' },
+    { k: 'circle', cx: magnet.x, cy: magnet.y, r: 13, fill: '#0B1220', stroke: color, sw: 2.4 },
+    { k: 'path', d: sign, stroke: color, sw: 2.2, cap: 'round' },
+  ];
+}
+
+/** Tear-sheet bar: a torn paper strip. Slow stones bounce, fast stones rip through it. */
+export function tearOps(tear: TearBar, broken: boolean): Op[] {
+  const { x1, y1, x2, y2 } = tear.segment;
+  if (broken) {
+    return [
+      { k: 'line', x1, y1, x2: x1 + (x2 - x1) * 0.34, y2: y1 - 4, stroke: '#E9E4D6', sw: 3, o: 0.35, cap: 'round', dash: '4 3' },
+      { k: 'line', x1: x1 + (x2 - x1) * 0.66, y1: y1 + 4, x2, y2, stroke: '#E9E4D6', sw: 3, o: 0.35, cap: 'round', dash: '4 3' },
+    ];
+  }
+  let d = `M${f(x1)} ${f(y1)}`;
+  const steps = 9;
+  for (let i = 1; i <= steps; i += 1) d += `L${f(x1 + ((x2 - x1) * i) / steps)} ${f(y1 + (i % 2 === 0 ? -3.2 : 3.2))}`;
+  return [
+    { k: 'line', x1, y1, x2, y2, stroke: '#E9E4D6', sw: 11, o: 0.1, cap: 'round' },
+    { k: 'path', d, stroke: '#E9E4D6', sw: 3.4, cap: 'round', join: 'round' },
+    { k: 'path', d, stroke: '#9AA6B8', sw: 1, cap: 'round', join: 'round', dash: '2 3', o: 0.8 },
+  ];
+}
+
+/* ---------- the Eraser ---------- */
+
+export function eraserOps(rect: EraserRect): Op[] {
+  const x = rect.cx - rect.w / 2;
+  const y = rect.cy - rect.h / 2;
+  const ops: Op[] = [
+    { k: 'rect', x: x - 7, y: y - 7, w: rect.w + 14, h: rect.h + 14, rx: 16, fill: '#FF6F91', o: 0.14 },
+    { k: 'path', d: roundRect(x, y, rect.w, rect.h, 11), fill: '#F7B4C4', stroke: '#C8607E', sw: 1.6 },
+    { k: 'path', d: roundRect(x + rect.w * 0.62, y, rect.w * 0.38, rect.h, 11), fill: '#4D6FD3', o: 0.92 },
+    { k: 'line', x1: x + rect.w * 0.62, y1: y + 2, x2: x + rect.w * 0.62, y2: y + rect.h - 2, stroke: '#2F4AA8', sw: 1.4 },
+    { k: 'path', d: roundRect(x + 5, y + 5, rect.w * 0.5, rect.h * 0.28, 5), fill: '#FFFFFF', o: 0.3 },
+  ];
+  for (let i = 0; i < 5; i += 1) {
+    ops.push({ k: 'circle', cx: x + 6 + i * 11, cy: y - 5 - (i % 2) * 5, r: 2 + (i % 3) * 0.6, fill: '#F7B4C4', o: 0.55 - i * 0.07 });
+  }
+  return ops;
+}
+
+/** Faint dashed outline where a bar was rubbed out; it is redrawn a moment later. */
+export function ghostBarOps(seg: Segment, color: string): Op[] {
+  return [line(seg, color, 2, { o: 0.28, dash: '3 6' })];
+}
+
+/* ---------- the Artist's pencil ---------- */
+
+export function pencilGlyph(anchor: Point, size = 1): Op[] {
+  const { x, y } = anchor;
+  const k = size;
+  return [
+    { k: 'path', d: `M${f(x)} ${f(y)}L${f(x + 5 * k)} ${f(y - 14 * k)}L${f(x + 11 * k)} ${f(y - 12 * k)}Z`, fill: '#F5D7A1', stroke: '#8A6A3A', sw: 0.8 },
+    { k: 'path', d: `M${f(x + 5 * k)} ${f(y - 14 * k)}L${f(x + 11 * k)} ${f(y - 12 * k)}L${f(x + 24 * k)} ${f(y - 40 * k)}L${f(x + 18 * k)} ${f(y - 42 * k)}Z`, fill: '#F5C451', stroke: '#8A6A3A', sw: 0.8 },
+    { k: 'path', d: `M${f(x + 18 * k)} ${f(y - 42 * k)}L${f(x + 24 * k)} ${f(y - 40 * k)}L${f(x + 26 * k)} ${f(y - 46 * k)}L${f(x + 20 * k)} ${f(y - 48 * k)}Z`, fill: '#FF8FB1', stroke: '#8A6A3A', sw: 0.8 },
+    { k: 'circle', cx: x, cy: y, r: 1.6, fill: '#3A3A44' },
+  ];
+}
+
+export function pencilOps(bar: PencilBar, graphite = '#C9D1DC'): Op[] {
+  if (bar.phase === 'telegraph') {
+    return [line(bar.full, '#F5C451', 1.8, { o: 0.5, dash: '2 7' }), ...pencilGlyph({ x: bar.full.x1, y: bar.full.y1 }, 0.7).map((op) => ({ ...op, o: 0.55 }))];
+  }
+  const fade = bar.phase === 'erase' ? 0.45 : 1;
+  const ops: Op[] = [line(bar.segment, graphite, 9, { o: 0.12 * fade }), line(bar.segment, graphite, 3.4, { o: fade }), line(bar.segment, '#FFFFFF', 0.9, { o: 0.4 * fade })];
+  if (bar.phase === 'draw') ops.push(...pencilGlyph(bar.tip, 0.85));
+  return ops;
+}
+
+/* ---------- ink line, stains, night ---------- */
+
+export function inkLineOps(seg: Segment, age: number, lifetime: number, color: string): Op[] {
+  const fade = Math.max(0, Math.min(1, (lifetime - age) / 0.45));
+  return [line(seg, color, 12, { o: 0.16 * fade }), line(seg, color, 4.6, { o: fade }), line(seg, '#FFFFFF', 1, { o: 0.45 * fade })];
+}
+
+export function stainOps(stain: Stain, color: string): Op[] {
+  const random = rng(stain.seed);
+  const ops: Op[] = [{ k: 'path', d: blobPath(stain.x, stain.y, stain.r, stain.seed, 8), fill: color, o: 0.3 }];
+  for (let i = 0; i < 4; i += 1) {
+    const angle = random() * Math.PI * 2;
+    const dist = stain.r * (1.1 + random() * 0.9);
+    ops.push({ k: 'circle', cx: stain.x + Math.cos(angle) * dist, cy: stain.y + Math.sin(angle) * dist, r: 1.4 + random() * 2.2, fill: color, o: 0.28 });
+  }
+  return ops;
+}
+
+/** Night page: everything beyond a lantern circle around the stone is dark. */
+export function nightArt(center: Point, width: number, height: number, background: string): Art {
+  return {
+    defs: [{ id: 'night-grad', units: 'user', cx: center.x, cy: center.y, r: 150, stops: [{ o: 0, c: background, a: 0 }, { o: 0.45, c: background, a: 0 }, { o: 1, c: background, a: 0.95 }] }],
+    ops: [{ k: 'rect', x: 0, y: 0, w: width, h: height, fill: 'url(#night-grad)' }],
+  };
+}
+
+/** Dotted preview shown as a hint after repeated failures. */
+export function hintPathOps(points: Point[], color: string): Op[] {
+  const ops: Op[] = [];
+  points.forEach((pt, i) => {
+    if (i > 1 && i % 2 === 0) ops.push({ k: 'circle', cx: pt.x, cy: pt.y, r: 2.2, fill: color, o: 0.55 });
+  });
+  return ops;
+}
+
+/** Where the reveal pencil should sit: the end of the latest visible op that has a clear point. */
+export function opAnchor(op: Op): Point | null {
+  if (op.k === 'line') return { x: op.x2, y: op.y2 };
+  if (op.k === 'circle') return { x: op.cx, y: op.cy };
+  return null;
 }
 
 export function trailOps(points: Point[], color: string): Op[] {
@@ -379,6 +520,8 @@ export function opToSvg(op: Op): string {
       return `<path ${attrs([['d', op.d], ['fill', op.fill ?? 'none'], ['stroke', op.stroke], ['stroke-width', op.sw], ['stroke-linecap', op.cap], ['stroke-linejoin', op.join], ['stroke-dasharray', op.dash], ['opacity', op.o]])}/>`;
     case 'circle':
       return `<circle ${attrs([['cx', f(op.cx)], ['cy', f(op.cy)], ['r', f(op.r)], ['fill', op.fill ?? 'none'], ['stroke', op.stroke], ['stroke-width', op.sw], ['stroke-dasharray', op.dash], ['opacity', op.o]])}/>`;
+    case 'rect':
+      return `<rect ${attrs([['x', f(op.x)], ['y', f(op.y)], ['width', f(op.w)], ['height', f(op.h)], ['rx', op.rx], ['fill', op.fill], ['opacity', op.o]])}/>`;
     case 'ellipse':
       return `<ellipse ${attrs([['cx', f(op.cx)], ['cy', f(op.cy)], ['rx', f(op.rx)], ['ry', f(op.ry)], ['fill', op.fill ?? 'none'], ['opacity', op.o]])}/>`;
     case 'text':
@@ -391,7 +534,8 @@ export function defsToSvg(defs: Grad[]): string {
   const body = defs
     .map((grad) => {
       const stops = grad.stops.map((s) => `<stop offset="${s.o}" stop-color="${s.c}" stop-opacity="${s.a ?? 1}"/>`).join('');
-      return `<radialGradient id="${grad.id}" cx="${grad.cx ?? 0.5}" cy="${grad.cy ?? 0.5}" r="${grad.r ?? 0.5}">${stops}</radialGradient>`;
+      const units = grad.units === 'user' ? ' gradientUnits="userSpaceOnUse"' : '';
+      return `<radialGradient id="${grad.id}" cx="${grad.cx ?? 0.5}" cy="${grad.cy ?? 0.5}" r="${grad.r ?? 0.5}"${units}>${stops}</radialGradient>`;
     })
     .join('');
   return `<defs>${body}</defs>`;

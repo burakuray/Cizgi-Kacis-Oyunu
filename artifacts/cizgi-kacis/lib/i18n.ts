@@ -3,15 +3,7 @@ import { getLocales } from 'expo-localization';
 export type Language = 'tr' | 'en';
 
 const deviceLanguage = getLocales()[0]?.languageCode?.toLowerCase();
-export let language: Language = deviceLanguage?.startsWith('en') ? 'en' : 'tr';
-
-export function setLanguage(next: Language) {
-  language = next;
-}
-
-export function toggleLanguage() {
-  setLanguage(language === 'tr' ? 'en' : 'tr');
-}
+export const language: Language = deviceLanguage?.startsWith('en') ? 'en' : 'tr';
 
 const copy = {
   tr: {
@@ -56,6 +48,52 @@ const copy = {
     gameOverTitle: 'Oyun sona erdi',
     gameOverCopy: 'Tekrar başlamak ister misin?',
     restart: 'Yeniden başla',
+    kindPrecision: 'Hassasiyet koridoru',
+    kindPortals: 'Geçit bulmacası',
+    kindRelax: 'Rahatlama sayfası',
+    kindPencil: 'Çizer’in kalemi',
+    kindEraser: 'Silgi avda',
+    kindBoss: 'Silgi’nin son hamlesi',
+    relaxNote: 'Bu sayfada can kaybetmezsin.',
+    inkMeter: 'MÜREKKEP',
+    drawHint: 'Taş uçarken ekrana kısa bir çizgi çiz: taşı bir kez saptırır.',
+    nearMiss: 'KIL PAYI!',
+    pureClear: 'Saf geçiş! Hiç çizmeden',
+    surpriseTitle: 'Günün Sürpriz Sayfası',
+    surpriseCopy: 'Bugünkü kural: {rule}',
+    surpriseDone: 'Bugünün sürprizi tamam. Yarın yenisi gelecek.',
+    surpriseLocked: 'İlk 3 bölümü bitirince açılır.',
+    playSurprise: 'Sürprizi oyna',
+    surpriseWon: 'Sürpriz sayfa tamam! +{count} mürekkep',
+    ruleSlick: 'Kaygan sayfa',
+    ruleMirror: 'Ayna sayfa',
+    ruleNight: 'Gece sayfası',
+    ruleSlickCopy: 'Taş çok daha az sürtünür, uzağa kayar.',
+    ruleMirrorCopy: 'Sayfa sağdan sola çevrildi.',
+    ruleNightCopy: 'Sadece taşın etrafı görünür.',
+    bonusTitle: 'Bonus sayfa!',
+    bonusCopy: 'Üç kusursuz geçiş! Kaygan bir sürpriz sayfa seni bekliyor.',
+    bonusPlay: 'Bonus sayfayı oyna',
+    bonusSkip: 'Şimdi değil',
+    assistOn: 'İpucu açıldı: yön önizlemesi',
+    dropInk: 'Sürpriz! +{count} mürekkep',
+    dropSkin: 'Nadir taş bulundu: {name}',
+    dropCard: 'Gizli hikaye kartı bulundu!',
+    skinGalaxy: 'Galaksi',
+    skinEmber: 'Kor',
+    reqDrop: 'Bir bölümden sonra sürpriz olarak düşer',
+    gallery: 'Yolculuğum',
+    galleryEmpty: 'Bölümleri geçtikçe çizdiğin yollar burada birikir.',
+    share: 'Paylaş',
+    shareText: 'Çizgi Kaçış: {stars} yıldız topladım, {levels} sayfa geçtim!',
+    cards: 'Gizli kartlar',
+    cardLocked: 'Kilitli kart. Bölümlerden sonra sürpriz olarak düşer.',
+    pureBadge: 'Saf geçiş',
+    onoHit: 'BONK!|ÇAT!|PAT!|VIZ!|TAK!',
+    onoGoal: 'İŞTE!|YEŞ!|HOP!',
+    surpriseBadge: 'SÜRPRİZ',
+    bonusBadge: 'BONUS',
+    continueRun: 'Devam et',
     bouncer: 'zıplatıcı',
     medalPerfect: 'Kusursuz atış',
     medalClean: 'Temiz geçiş',
@@ -111,7 +149,6 @@ const copy = {
     bestStreak: 'En iyi seri',
     selected: 'Seçili',
     backToGame: 'Oyuna dön',
-    languageToggle: 'Dili değiştir',
   },
   en: {
     gameName: 'LINE ESCAPE',
@@ -155,6 +192,52 @@ const copy = {
     gameOverTitle: 'Game over',
     gameOverCopy: 'Would you like to play again?',
     restart: 'Restart',
+    kindPrecision: 'Precision corridor',
+    kindPortals: 'Portal puzzle',
+    kindRelax: 'Relax page',
+    kindPencil: 'The Artist’s pencil',
+    kindEraser: 'The Eraser hunts',
+    kindBoss: 'The Eraser’s last move',
+    relaxNote: 'You cannot lose a life on this page.',
+    inkMeter: 'INK',
+    drawHint: 'While the stone flies, draw one short line: it deflects the stone once.',
+    nearMiss: 'CLOSE CALL!',
+    pureClear: 'Pure clear! No ink drawn',
+    surpriseTitle: 'Surprise Page of the Day',
+    surpriseCopy: 'Today’s rule: {rule}',
+    surpriseDone: 'Today’s surprise is done. A new one comes tomorrow.',
+    surpriseLocked: 'Unlocks after the first 3 levels.',
+    playSurprise: 'Play the surprise',
+    surpriseWon: 'Surprise page complete! +{count} ink',
+    ruleSlick: 'Slick page',
+    ruleMirror: 'Mirror page',
+    ruleNight: 'Night page',
+    ruleSlickCopy: 'The stone has far less friction and glides on.',
+    ruleMirrorCopy: 'The page is flipped left to right.',
+    ruleNightCopy: 'Only the area around the stone is visible.',
+    bonusTitle: 'Bonus page!',
+    bonusCopy: 'Three perfect clears! A slick surprise page is waiting.',
+    bonusPlay: 'Play the bonus page',
+    bonusSkip: 'Not now',
+    assistOn: 'Hint on: direction preview',
+    dropInk: 'Surprise! +{count} ink',
+    dropSkin: 'Rare stone found: {name}',
+    dropCard: 'Secret story card found!',
+    skinGalaxy: 'Galaxy',
+    skinEmber: 'Ember',
+    reqDrop: 'Drops as a surprise after a level',
+    gallery: 'My journey',
+    galleryEmpty: 'The routes you draw while clearing levels collect here.',
+    share: 'Share',
+    shareText: 'Line Escape: I collected {stars} stars and cleared {levels} pages!',
+    cards: 'Secret cards',
+    cardLocked: 'Locked card. Drops as a surprise after levels.',
+    pureBadge: 'Pure clear',
+    onoHit: 'BONK!|SPLAT!|THUD!|ZAP!|TAP!',
+    onoGoal: 'YES!|NICE!|HOP!',
+    surpriseBadge: 'SURPRISE',
+    bonusBadge: 'BONUS',
+    continueRun: 'Continue',
     bouncer: 'bouncer',
     medalPerfect: 'Perfect shot',
     medalClean: 'Clean pass',
@@ -210,7 +293,6 @@ const copy = {
     bestStreak: 'Best streak',
     selected: 'Selected',
     backToGame: 'Back to game',
-    languageToggle: 'Switch language',
   },
 } as const;
 
@@ -232,4 +314,10 @@ export function L<T>(value: { tr: T; en: T }): T {
 export function skinName(skinId: string) {
   const key = `skin${skinId.charAt(0).toUpperCase()}${skinId.slice(1)}` as CopyKey;
   return key in copy.tr ? t(key) : skinId;
+}
+
+/** Picks a stable word from a `a|b|c` list so the same impact always says the same thing. */
+export function pickWord(key: CopyKey, seed: number): string {
+  const words = t(key).split('|');
+  return words[Math.abs(seed) % words.length];
 }

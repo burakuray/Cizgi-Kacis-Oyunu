@@ -9,20 +9,31 @@ export type MovingBar = {
   speed: number;
   phase: number;
 };
-export type MovingThorn = {
-  segment: Segment;
-  axis: 'x' | 'y';
-  travel: number;
-  speed: number;
-  phase: number;
-};
-
 export type PortalPair = { id: string; a: Point; b: Point; label: string };
 
 export const STONE_RADIUS = 13;
 export const HOLE_RADIUS = 18;
 
+export type LevelKind = 'standard' | 'precision' | 'portals' | 'relax' | 'pencil' | 'eraser' | 'boss';
+
+const FIXED_KINDS: Record<number, LevelKind> = {
+  5: 'portals', 6: 'relax', 7: 'precision', 9: 'pencil', 10: 'precision', 11: 'portals',
+  12: 'relax', 13: 'eraser', 14: 'pencil', 15: 'eraser', 16: 'boss',
+};
+const ENDLESS_KINDS: LevelKind[] = ['standard', 'precision', 'portals', 'pencil', 'eraser'];
+
+/** Every few levels the page changes character so the run never feels like the same course twice. */
+export function levelKind(level: number): LevelKind {
+  const safe = Math.max(1, Math.floor(level));
+  const fixed = FIXED_KINDS[safe];
+  if (fixed) return fixed;
+  if (safe <= 16) return 'standard';
+  if (safe % 8 === 0) return 'boss';
+  return ENDLESS_KINDS[(safe - 17) % ENDLESS_KINDS.length];
+}
+
 export type DifficultyProfile = {
+  gapShrink: number;
   barrierCount: number;
   movingBarCount: number;
   movingBarSpeed: number;
@@ -32,7 +43,27 @@ export type DifficultyProfile = {
 
 export function getDifficultyProfile(level: number): DifficultyProfile {
   const safeLevel = Math.max(1, Math.floor(level));
+  const base = baseProfile(safeLevel);
+  switch (levelKind(safeLevel)) {
+    case 'portals':
+      return { ...base, barrierCount: Math.max(2, base.barrierCount - 2), movingBarCount: 0, bouncyBarrierCount: 0, portalPairCount: Math.min(3, base.portalPairCount + 1) };
+    case 'precision':
+      return { ...base, barrierCount: Math.min(12, base.barrierCount + 1), movingBarCount: 0, gapShrink: 16 };
+    case 'relax':
+      return { ...base, barrierCount: Math.max(2, base.barrierCount - 2), movingBarCount: 0, gapShrink: -8 };
+    case 'eraser':
+    case 'boss':
+      return { ...base, movingBarCount: 0 };
+    case 'pencil':
+      return { ...base, movingBarCount: Math.min(base.movingBarCount, 1) };
+    default:
+      return base;
+  }
+}
+
+function baseProfile(safeLevel: number): DifficultyProfile {
   return {
+    gapShrink: 0,
     barrierCount: Math.min(12, 2 + Math.floor((safeLevel + 1) / 2)),
     movingBarCount: safeLevel < 2 ? 0 : Math.min(3, 1 + Math.floor((safeLevel - 2) / 4)),
     movingBarSpeed: 1.1 + Math.min(1.1, Math.max(0, safeLevel - 2) * 0.1),
@@ -69,97 +100,17 @@ export function distanceToSegment(point: Point, segment: Segment) {
   return Math.hypot(point.x - nearest.x, point.y - nearest.y);
 }
 
-function clearanceTo(point: Point, segments: Segment[]) {
+export function clearanceTo(point: Point, segments: Segment[]) {
   return segments.reduce((nearest, segment) => Math.min(nearest, distanceToSegment(point, segment)), Infinity);
 }
 
-function segmentsOverlap(a: Segment, b: Segment, pad = 8) {
-  const aMinX = Math.min(a.x1, a.x2) - pad;
-  const aMaxX = Math.max(a.x1, a.x2) + pad;
-  const aMinY = Math.min(a.y1, a.y2) - pad;
-  const aMaxY = Math.max(a.y1, a.y2) + pad;
-  const bMinX = Math.min(b.x1, b.x2) - pad;
-  const bMaxX = Math.max(b.x1, b.x2) + pad;
-  const bMinY = Math.min(b.y1, b.y2) - pad;
-  const bMaxY = Math.max(b.y1, b.y2) + pad;
-  return !(aMaxX < bMinX || bMaxX < aMinX || aMaxY < bMinY || bMaxY < aMinY);
-}
-
-function segmentCollidesWithAny(candidate: Segment, segments: Segment[], pad = 10) {
-  return segments.some((segment) => segmentsOverlap(candidate, segment, pad));
-}
-
-function orientation(a: Point, b: Point, c: Point) {
-  const value = (b.y - a.y) * (c.x - b.x) - (b.x - a.x) * (c.y - b.y);
-  if (Math.abs(value) < 0.0001) return 0;
-  return value > 0 ? 1 : 2;
-}
-
-function onSegment(a: Point, b: Point, c: Point) {
-  return (
-    b.x >= Math.min(a.x, c.x) - 0.0001 &&
-    b.x <= Math.max(a.x, c.x) + 0.0001 &&
-    b.y >= Math.min(a.y, c.y) - 0.0001 &&
-    b.y <= Math.max(a.y, c.y) + 0.0001
-  );
-}
-
-function segmentsIntersect(a: Segment, b: Segment) {
-  const a1 = { x: a.x1, y: a.y1 };
-  const a2 = { x: a.x2, y: a.y2 };
-  const b1 = { x: b.x1, y: b.y1 };
-  const b2 = { x: b.x2, y: b.y2 };
-  const o1 = orientation(a1, a2, b1);
-  const o2 = orientation(a1, a2, b2);
-  const o3 = orientation(b1, b2, a1);
-  const o4 = orientation(b1, b2, a2);
-  if (o1 !== o2 && o3 !== o4) return true;
-  if (o1 === 0 && onSegment(a1, b1, a2)) return true;
-  if (o2 === 0 && onSegment(a1, b2, a2)) return true;
-  if (o3 === 0 && onSegment(b1, a1, b2)) return true;
-  if (o4 === 0 && onSegment(b1, a2, b2)) return true;
-  return false;
-}
-
-function segmentDistance(a: Segment, b: Segment) {
-  if (segmentsIntersect(a, b)) return 0;
-  return Math.min(
-    distanceToSegment({ x: a.x1, y: a.y1 }, b),
-    distanceToSegment({ x: a.x2, y: a.y2 }, b),
-    distanceToSegment({ x: b.x1, y: b.y1 }, a),
-    distanceToSegment({ x: b.x2, y: b.y2 }, a),
-  );
-}
-
-export function isDirectEscapeBlocked(origin: Point, goal: Point, obstacles: Segment[], padding = STONE_RADIUS + 4) {
-  const escapeLine: Segment = { x1: origin.x, y1: origin.y, x2: goal.x, y2: goal.y };
-  return obstacles.some((obstacle) => segmentDistance(escapeLine, obstacle) <= padding);
-}
-
-export function distanceBetweenSegments(a: Segment, b: Segment) {
-  return segmentDistance(a, b);
-}
-
-export function segmentHitsObstacle(
-  from: Point,
-  to: Point,
-  obstacle: Segment,
-  padding = STONE_RADIUS + 3,
-) {
-  return distanceBetweenSegments(
-    { x1: from.x, y1: from.y, x2: to.x, y2: to.y },
-    obstacle,
-  ) <= padding;
-}
-
-
-type PlacementBounds = { minX: number; maxX: number; minY: number; maxY: number };
+export type PlacementBounds = { minX: number; maxX: number; minY: number; maxY: number };
 
 /**
  * Finds the spot closest to `anchor` whose `score` is >= 0 (searching outwards in rings).
  * Deterministic, so a level always looks the same. Falls back to the best score found.
  */
-function placeNear(anchor: Point, score: (point: Point) => number, bounds: PlacementBounds): Point {
+export function placeNear(anchor: Point, score: (point: Point) => number, bounds: PlacementBounds): Point {
   const inside = (point: Point) => ({ x: clamp(point.x, bounds.minX, bounds.maxX), y: clamp(point.y, bounds.minY, bounds.maxY) });
   let best = inside(anchor);
   let bestScore = score(best);
@@ -179,111 +130,90 @@ function placeNear(anchor: Point, score: (point: Point) => number, bounds: Place
   return best;
 }
 
-export function makeCourse(level: number, width: number, height: number): Segment[] {
-  const lines: Segment[] = [];
-  const { barrierCount: count } = getDifficultyProfile(level);
+/** Longest distance one shot can travel, as a fraction of the start-to-exit distance. Below 1 on purpose. */
+export const SHOT_RANGE_FRACTION = 0.62;
+export const MAX_SHOT_SPEED = 7.1;
+export const STOP_SPEED = 0.08;
+
+export function startPoint(width: number, height: number): Point {
+  return { x: width / 2, y: height - 57 };
+}
+
+export function exitPoint(width: number): Point {
+  return { x: width / 2, y: 51 };
+}
+
+/**
+ * How far the strongest shot can travel. It is always shorter than the straight line from the start to the
+ * exit, so EVERY page needs at least two shots, whatever the layout (bounces and ink lines only lose energy).
+ */
+export function shotRange(height: number): number {
+  return SHOT_RANGE_FRACTION * (height - 108);
+}
+
+export type WallGap = { y: number; x: number; w: number };
+
+/**
+ * The page is built from full-width walls, each with one gap. Gaps alternate left/right, so the stone has to
+ * travel sideways between walls and cannot simply fly straight up.
+ */
+export function wallLayout(level: number, width: number, height: number): WallGap[] {
   const usableTop = Math.max(94, height * 0.14);
-  const usableBottom = height - 116;
-  const laneWidth = width / (count + 1);
-
-  const addSafeVertical = (x: number, topY: number, bottomY: number) => {
-    const top = { x1: x, y1: usableTop, x2: x, y2: topY };
-    const bottom = { x1: x, y1: bottomY, x2: x, y2: usableBottom };
-    if (!segmentCollidesWithAny(top, lines, 12) && !segmentCollidesWithAny(bottom, lines, 12)) {
-      lines.push(top, bottom);
-      return true;
-    }
-
-    for (const delta of [12, -12, 24, -24, 36, -36, 48, -48, 60, -60]) {
-      const candidateTopY = topY + delta;
-      const candidateBottomY = Math.min(usableBottom - 22, candidateTopY + Math.max(44, (height - usableTop - usableBottom) / 2 + ((x / laneWidth) % 2) * 24) + Math.max(30, 62 - Math.floor(level / 3) * 5) + ((level + Math.round(x / laneWidth) * 13) % 3) * 11);
-      const candidateTop = { x1: x, y1: usableTop, x2: x, y2: candidateTopY };
-      const candidateBottom = { x1: x, y1: candidateBottomY, x2: x, y2: usableBottom };
-      if (!segmentCollidesWithAny(candidateTop, lines, 12) && !segmentCollidesWithAny(candidateBottom, lines, 12)) {
-        lines.push(candidateTop, candidateBottom);
-        return true;
-      }
-    }
-
-    return false;
+  const yFirst = height - 178;
+  const yLast = usableTop + 56;
+  const span = Math.max(0, yFirst - yLast);
+  const capacity = Math.max(2, Math.floor(span / 68) + 1);
+  const kind = levelKind(level);
+  // Every wall costs the player at least one extra shot, so cap it: tall screens get roomier chambers instead.
+  let wanted = Math.min(4, 2 + Math.floor((level - 1) / 3));
+  if (kind === 'relax') wanted -= 1;
+  if (kind === 'portals') wanted = Math.max(wanted, 3);
+  const count = clamp(wanted, 2, Math.min(4, capacity));
+  const { gapShrink } = getDifficultyProfile(level);
+  const gapWidth = Math.max(46, 86 - Math.floor(level * 1.5) - gapShrink);
+  const random = (index: number, salt: number) => {
+    const value = Math.sin(level * 12.9898 + index * 78.233 + salt * 37.719) * 43758.5453;
+    return value - Math.floor(value);
   };
-
+  const gaps: WallGap[] = [];
   for (let index = 0; index < count; index += 1) {
-    const x = laneWidth * (index + 1);
-    const gap = Math.max(30, 62 - Math.floor(level / 3) * 5) + ((level + index * 13) % 3) * 11;
-    const shift = (index % 2) * 24;
-    const topLength = Math.max(44, (height - usableTop - usableBottom) / 2 + shift);
-    const topY = usableTop + ((index * 37 + level * 19) % 55);
-    const bottomY = Math.min(usableBottom - 22, topY + topLength + gap);
-    addSafeVertical(x, topY, bottomY);
+    const y = yFirst - (span * index) / (count - 1);
+    const side = (index + level) % 2 === 0 ? -1 : 1;
+    const edge = 0.2 + random(index, 1) * 0.1;
+    gaps.push({ y, x: side < 0 ? width * edge : width * (1 - edge), w: gapWidth });
   }
+  return gaps;
+}
 
-  const addSafeHorizontal = (segment: Segment, pad = 16) => {
-    if (!segmentCollidesWithAny(segment, lines, pad)) {
-      lines.push(segment);
-      return true;
-    }
+export function makeCourse(level: number, width: number, height: number): Segment[] {
+  const gaps = wallLayout(level, width, height);
+  const lines: Segment[] = [];
+  gaps.forEach((gap) => {
+    lines.push({ x1: 0, y1: gap.y, x2: gap.x - gap.w / 2, y2: gap.y });
+    lines.push({ x1: gap.x + gap.w / 2, y1: gap.y, x2: width, y2: gap.y });
+  });
 
-    const baseY = segment.y1;
-    for (const delta of [18, -18, 36, -36, 54, -54, 72, -72, 90, -90]) {
-      const candidate = { ...segment, y1: baseY + delta, y2: baseY + delta };
-      if (!segmentCollidesWithAny(candidate, lines, pad)) {
-        lines.push(candidate);
-        return true;
-      }
-    }
-
-    return false;
-  };
-
-  if (level >= 3) {
-    const y = usableTop + 100 + ((level * 23) % 60);
-    addSafeHorizontal({ x1: 26, y1: y, x2: width * 0.42, y2: y });
-  }
-  if (level >= 5) {
-    const y = usableTop + 214 + ((level * 17) % 56);
-    addSafeHorizontal({ x1: width * 0.58, y1: y, x2: width - 26, y2: y });
-  }
-  if (level >= 7) {
-    const y = usableTop + 158 + ((level * 29) % 52);
-    addSafeHorizontal({ x1: 26, y1: y, x2: width * 0.34, y2: y });
-  }
-
-  // From level 3 onward, never leave the start-to-exit spine completely open.
-  // This prevents a lucky single launch from reaching the fixed exit directly.
-  if (level >= 3 && !isDirectEscapeBlocked(
-    { x: width / 2, y: height - 57 },
-    { x: width / 2, y: 51 },
-    lines,
-    STONE_RADIUS + 5,
-  )) {
-    const centerX = width / 2;
-    let gate: Segment | null = null;
-    let bestScore = -Infinity;
-    for (let centerY = usableTop + 34; centerY <= usableBottom - 34; centerY += 6) {
-      for (let x1 = 26; x1 <= width - 26; x1 += 6) {
-        const x2 = Math.min(width - 26, x1 + 94);
-        if (x1 > centerX || x2 < centerX) continue;
-        const candidate = { x1, y1: centerY, x2, y2: centerY };
-        if (segmentCollidesWithAny(candidate, lines, 12)) continue;
-        const score = Math.min(
-          distanceToSegment({ x: centerX, y: centerY }, candidate),
-          Math.abs(centerX - x1),
-          Math.abs(x2 - centerX),
-        );
-        if (score > bestScore) {
-          bestScore = score;
-          gate = candidate;
-        }
-      }
-    }
-    if (gate) lines.push(gate);
+  // Short posts inside the roomier chambers make the sideways trip a little harder.
+  const kind = levelKind(level);
+  const chambers = gaps.length - 1;
+  const wantedPosts = level >= 3 && kind !== 'relax' ? Math.min(3, 1 + Math.floor((level - 3) / 3)) : 0;
+  for (let post = 0; post < Math.min(wantedPosts, chambers); post += 1) {
+    const chamber = (level + post) % chambers;
+    const low = gaps[chamber].y;
+    const high = gaps[chamber + 1].y;
+    const room = low - high - 72;
+    if (room < 18) continue;
+    const length = Math.min(44, room);
+    const mid = (low + high) / 2;
+    const noise = Math.sin(level * 5.17 + chamber * 3.31) * 0.5 + 0.5;
+    const x = width * (0.38 + noise * 0.24);
+    lines.push({ x1: x, y1: mid - length / 2, x2: x, y2: mid + length / 2 });
   }
   return lines;
 }
 
 /** The strip a moving bar sweeps over time, as one segment (used so other pieces keep clear of it). */
-function sweptSegment(bar: MovingBar): Segment {
+export function sweptSegment(bar: MovingBar): Segment {
   const { segment, axis, travel } = bar;
   return axis === 'x'
     ? { x1: segment.x1 - travel, y1: segment.y1, x2: segment.x2 + travel, y2: segment.y2 }
@@ -297,11 +227,13 @@ export function makeBouncyBarriers(level: number, width: number, height: number)
   const usableTop = Math.max(94, height * 0.14);
   const usableBottom = height - 116;
   const y = usableTop + 62 + ((level * 31) % Math.max(40, usableBottom - usableTop - 120));
-  const build = (baseY: number) => {
+  const build = (baseY: number, flip = false) => {
     const barriers: Segment[] = [];
     for (let index = 0; index < bouncyBarrierCount; index += 1) {
       const length = width * (index === 0 ? 0.34 : 0.24);
-      const left = index === 0 ? (level % 2 === 0 ? width * 0.1 : width * 0.56) : width * 0.18;
+      const rightSide = index === 0 && level % 2 !== 0;
+      const useRight = flip ? !rightSide : rightSide;
+      const left = useRight ? width * 0.56 : index === 0 ? width * 0.1 : width * 0.18;
       const offsetY = index * 74;
       barriers.push({ x1: left, y1: baseY + offsetY, x2: left + length, y2: baseY + offsetY });
     }
@@ -313,22 +245,40 @@ export function makeBouncyBarriers(level: number, width: number, height: number)
     ...makeCourse(level, width, height).filter((segment) => segment.y1 === segment.y2),
     ...makeMovingBars(level, width, height).map(sweptSegment),
   ];
+  const gapZones = wallLayout(level, width, height);
+  const portalPoints = makePortals(level, width, height).flatMap((pair) => [pair.a, pair.b]);
+  const posts = makeCourse(level, width, height).filter((segment) => segment.x1 === segment.x2);
   const overlapsBar = (candidate: Segment[]) =>
-    candidate.some((bouncer) =>
-      horizontalBars.some(
-        (bar) =>
-          Math.abs(bar.y1 - bouncer.y1) < 34 &&
-          Math.min(bar.x2, bouncer.x2) - Math.max(bar.x1, bouncer.x1) > -10,
-      ),
-    );
+    candidate.some((bouncer) => {
+      const onBar = horizontalBars.some(
+        (bar) => Math.abs(bar.y1 - bouncer.y1) < 34 && Math.min(bar.x2, bouncer.x2) - Math.max(bar.x1, bouncer.x1) > -10,
+      );
+      if (onBar) return true;
+      // never plug the exit of a wall's gap: stay 76px away vertically from any gap the bouncer lies over
+      const pluggingGap = gapZones.some(
+        (gap) => Math.abs(gap.y - bouncer.y1) < 76 && Math.min(bouncer.x2, gap.x + gap.w / 2 + 24) - Math.max(bouncer.x1, gap.x - gap.w / 2 - 24) > 0,
+      );
+      if (pluggingGap) return true;
+      // keep clear of the portals and the short posts too (checked along the bouncer's length)
+      for (let x = bouncer.x1; x <= bouncer.x2; x += 12) {
+        const sample = { x, y: bouncer.y1 };
+        if (portalPoints.some((point) => Math.hypot(sample.x - point.x, sample.y - point.y) < HOLE_RADIUS + 26)) return true;
+        if (posts.some((post) => distanceToSegment(sample, post) < 30)) return true;
+      }
+      return false;
+    });
   const lowest = usableBottom - 40;
-  for (const shift of [0, 18, -18, 36, -36, 54, -54, 72, -72, 90, -90, 108, -108]) {
-    const candidate = build(y + shift);
-    const last = candidate[candidate.length - 1];
-    if (candidate[0].y1 < usableTop + 36 || last.y1 > lowest) continue;
-    if (!overlapsBar(candidate)) return candidate;
+  const shifts = [0];
+  for (let step = 6; step <= 210; step += 6) shifts.push(step, -step);
+  for (const shift of shifts) {
+    for (const flip of [false, true]) {
+      const candidate = build(y + shift, flip);
+      const last = candidate[candidate.length - 1];
+      if (candidate[0].y1 < usableTop + 36 || last.y1 > lowest) continue;
+      if (!overlapsBar(candidate)) return candidate;
+    }
   }
-  return build(y);
+  return [];
 }
 
 export function makeMovingBars(level: number, width: number, height: number): MovingBar[] {
@@ -361,47 +311,17 @@ export function makeMovingBars(level: number, width: number, height: number): Mo
   const barLength = 88;
   const count = movingBarCount;
   const bars: MovingBar[] = [];
-  const reserved: Segment[] = [...course];
 
   for (let index = 0; index < count; index += 1) {
     const lane = lanes[(level + index) % lanes.length];
+    const y = safeYs[(level * 3 + index) % safeYs.length];
     const direction = (level + index) % 2 === 0 ? 1 : -1;
     const maxTravel = Math.max(18, Math.min(40, (lane.maxX - lane.minX - barLength) / 2));
     const centerX = lane.centerX;
-    const candidateY = safeYs[(level * 3 + index) % safeYs.length];
 
-    const base = {
-      x1: centerX - barLength / 2,
-      y1: candidateY,
-      x2: centerX + barLength / 2,
-      y2: candidateY,
-    };
-
-    let chosenY = candidateY;
-    let chosenBase = base;
-    let found = false;
-
-    for (let offset = 0; offset < safeYs.length; offset += 1) {
-      const candidate = {
-        x1: centerX - barLength / 2,
-        y1: safeYs[(level * 3 + index + offset) % safeYs.length],
-        x2: centerX + barLength / 2,
-        y2: safeYs[(level * 3 + index + offset) % safeYs.length],
-      };
-      if (!segmentCollidesWithAny(candidate, reserved, 18)) {
-        chosenBase = candidate;
-        chosenY = candidate.y1;
-        found = true;
-        break;
-      }
-    }
-
-    if (!found) continue;
-
-    reserved.push(chosenBase);
     bars.push({
       id: `sweep-${level}-${index}`,
-      segment: chosenBase,
+      segment: { x1: centerX - barLength / 2, y1: y, x2: centerX + barLength / 2, y2: y },
       axis: 'x',
       direction: direction as -1 | 1,
       travel: maxTravel,
@@ -411,62 +331,6 @@ export function makeMovingBars(level: number, width: number, height: number): Mo
   }
 
   return bars;
-}
-
-export function makeMovingThorns(level: number, width: number, height: number): MovingThorn[] {
-  if (level < 5) return [];
-
-  const course = makeCourse(level, width, height);
-  const count = Math.min(3, Math.floor((level - 3) / 3));
-  const candidates = course
-    .map((segment) => ({ segment }))
-    .filter(({ segment }) => Math.hypot(segment.x2 - segment.x1, segment.y2 - segment.y1) >= 54);
-
-  const thorns: MovingThorn[] = [];
-  for (let i = 0; i < count && candidates.length > 0; i += 1) {
-    const pick = (level * 7 + i * 11) % candidates.length;
-    const { segment } = candidates[pick];
-    candidates.splice(pick, 1);
-    const horizontal = Math.abs(segment.x2 - segment.x1) >= Math.abs(segment.y2 - segment.y1);
-    thorns.push({
-      segment,
-      axis: horizontal ? 'y' : 'x',
-      travel: 10 + ((level * 13 + i * 17) % 18),
-      speed: 0.75 + ((level * 5 + i * 7) % 8) * 0.09,
-      phase: ((level * 19 + i * 31) % 360) * Math.PI / 180,
-    });
-  }
-  return thorns;
-}
-
-export function renderedMovingThorns(blueprints: MovingThorn[], time: number): Segment[] {
-  return blueprints.map((thorn) => {
-    const offset = Math.sin(time * thorn.speed + thorn.phase) * thorn.travel;
-    return thorn.axis === 'x'
-      ? { x1: thorn.segment.x1 + offset, y1: thorn.segment.y1, x2: thorn.segment.x2 + offset, y2: thorn.segment.y2 }
-      : { x1: thorn.segment.x1, y1: thorn.segment.y1 + offset, x2: thorn.segment.x2, y2: thorn.segment.y2 + offset };
-  });
-}
-
-export function staticCourseWithoutMovingThorns(course: Segment[], thorns: MovingThorn[]): Segment[] {
-  return course.filter((segment) => !thorns.some((thorn) =>
-    thorn.segment.x1 === segment.x1 &&
-    thorn.segment.y1 === segment.y1 &&
-    thorn.segment.x2 === segment.x2 &&
-    thorn.segment.y2 === segment.y2,
-  ));
-}
-
-export function positionGoal(level: number, width: number, height: number, time: number): Point {
-  const profile = getDifficultyProfile(level);
-  if (level < 7) return { x: width / 2, y: 51 };
-  const travelX = Math.min(width * 0.22, 34 + level * 2.2);
-  const travelY = Math.min(height * 0.08, 10 + level * 0.8);
-  const phase = level * 0.71;
-  return {
-    x: width / 2 + Math.sin(time * (0.55 + profile.movingBarSpeed * 0.08) + phase) * travelX,
-    y: 51 + Math.sin(time * 0.43 + phase * 1.7) * travelY,
-  };
 }
 
 export function positionMovingBar(bar: MovingBar, time: number): Segment {
@@ -493,150 +357,36 @@ export function renderedMovingBars(blueprints: MovingBar[], time: number) {
   return blueprints.map((bar) => positionMovingBar(bar, time));
 }
 
+/**
+ * Portals are shortcuts, not obstacles: each pair is a ONE-WAY jump from an entrance (a) to an exit (b).
+ * The entrance sits in a chamber on the far side from that wall's gap, and the exit is straight above it in
+ * the chamber beyond the wall, in line with the next gap, so a stone that enters and keeps going straight
+ * flies out and through the next gap. Pairs are only added while the whole page still needs more than one
+ * shot: the straight start-to-exit distance minus every jump must stay above the shot range.
+ */
 export function makePortals(level: number, width: number, height: number): PortalPair[] {
   const { portalPairCount } = getDifficultyProfile(level);
   if (portalPairCount === 0) return [];
-
-  const usableTop = Math.max(94, height * 0.14);
-  const usableBottom = height - 116;
-  const bounds: PlacementBounds = {
-    minX: HOLE_RADIUS + 16,
-    maxX: width - HOLE_RADIUS - 16,
-    minY: usableTop + 34,
-    maxY: usableBottom - 24,
-  };
-  const fixedBars = [...makeCourse(level, width, height), ...makeBouncyBarriers(level, width, height)];
-  const sweeps = makeMovingBars(level, width, height).map(sweptSegment);
-  const obstacles = [...fixedBars, ...sweeps];
-  const startPoint = { x: width / 2, y: height - 57 };
-  const goalPoint = { x: width / 2, y: 51 };
-  const directEscapeLine: Segment = {
-    x1: startPoint.x,
-    y1: startPoint.y,
-    x2: goalPoint.x,
-    y2: goalPoint.y,
-  };
-  const DIRECT_SPINE_CLEARANCE = 44;
-  const MIN_PORTAL_PROGRESS = Math.max(110, height * 0.22);
-  const MIN_PAIR_DISTANCE = Math.max(150, height * 0.32);
-  const MIN_ENTRY_DISTANCE_FROM_START = 95;
-
-  const placed: Point[] = [];
-
-  const pointIsSafe = (candidate: Point, safePoints: Point[]) => {
-    const minBarrierClearance = clearanceTo(candidate, fixedBars);
-    const minSweepClearance = sweeps.length > 0 ? clearanceTo(candidate, sweeps) : Infinity;
-    const minGap = safePoints.reduce(
-      (nearest, other) => Math.min(nearest, Math.hypot(candidate.x - other.x, candidate.y - other.y)),
-      Infinity,
-    );
-
-    return (
-      candidate.x >= bounds.minX &&
-      candidate.x <= bounds.maxX &&
-      candidate.y >= bounds.minY &&
-      candidate.y <= bounds.maxY &&
-      minBarrierClearance >= HOLE_RADIUS + 8 &&
-      minSweepClearance >= HOLE_RADIUS + 8 &&
-      distanceToSegment(candidate, directEscapeLine) >= DIRECT_SPINE_CLEARANCE &&
-      minGap >= HOLE_RADIUS * 2 + 18
-    );
-  };
-
-  // Portals are a player advantage, so the entry must be realistically reachable
-  // from the launch point. Otherwise a portal can exist visually but never become
-  // a meaningful part of the solution.
-  const entryIsUseful = (entry: Point) =>
-    Math.hypot(entry.x - startPoint.x, entry.y - startPoint.y) >= MIN_ENTRY_DISTANCE_FROM_START &&
-    !isDirectEscapeBlocked(startPoint, entry, obstacles);
-
-  // The exit should still require play after teleporting. This keeps the portal
-  // useful without turning it into an instant win.
-  const exitIsUseful = (exit: Point) =>
-    isDirectEscapeBlocked(exit, goalPoint, obstacles) &&
-    Math.hypot(exit.x - goalPoint.x, exit.y - goalPoint.y) >= 90;
-
-  const obstacleBypassValue = (entry: Point, exit: Point) => {
-    const teleportSpan: Segment = {
-      x1: entry.x,
-      y1: entry.y,
-      x2: exit.x,
-      y2: exit.y,
-    };
-    return obstacles.filter(
-      (obstacle) => segmentDistance(teleportSpan, obstacle) <= STONE_RADIUS + 8,
-    ).length;
-  };
-
-  const buildCandidates = (minY: number, maxY: number, requireEntry: boolean, requireExit: boolean) => {
-    const candidates: Point[] = [];
-    for (let y = minY; y <= maxY; y += 12) {
-      for (let x = bounds.minX; x <= bounds.maxX; x += 12) {
-        const candidate = { x, y };
-        if (!pointIsSafe(candidate, placed)) continue;
-        if (requireEntry && !entryIsUseful(candidate)) continue;
-        if (requireExit && !exitIsUseful(candidate)) continue;
-        candidates.push(candidate);
-      }
-    }
-    return candidates;
-  };
-
+  const gaps = wallLayout(level, width, height);
+  const origin = startPoint(width, height);
+  const goal = exitPoint(width);
+  const budget = Math.hypot(goal.x - origin.x, goal.y - origin.y) - shotRange(height) * 1.18;
+  const topLimit = Math.max(94, height * 0.14) - 6;
+  let spent = 0;
   const pairs: PortalPair[] = [];
 
-  for (let index = 0; index < portalPairCount; index += 1) {
-    const entries = buildCandidates(
-      Math.max(bounds.minY, usableTop + 150 - index * 20),
-      Math.min(bounds.maxY, usableBottom - 25),
-      true,
-      false,
-    );
-    const exits = buildCandidates(
-      bounds.minY,
-      Math.min(bounds.maxY, usableBottom - 150 + index * 20),
-      false,
-      true,
-    );
-
-    let best: { entry: Point; exit: Point; score: number; bypass: number } | null = null;
-
-    for (const entry of entries) {
-      for (const exit of exits) {
-        const progress = entry.y - exit.y;
-        const pairDistance = Math.hypot(entry.x - exit.x, entry.y - exit.y);
-        if (progress < MIN_PORTAL_PROGRESS || pairDistance < MIN_PAIR_DISTANCE) continue;
-
-        const bypass = obstacleBypassValue(entry, exit);
-        if (bypass < 1) continue;
-
-        // Prioritise real progress and bypassed obstacles. A small preference for
-        // lateral movement makes portals feel like deliberate shortcuts rather
-        // than two random holes placed on the same vertical lane.
-        const lateral = Math.abs(entry.x - exit.x);
-        const score =
-          progress * 2.2 +
-          bypass * 95 +
-          Math.min(lateral, width * 0.35) * 0.45 -
-          Math.abs(pairDistance - height * 0.48) * 0.18;
-
-        if (!best || score > best.score) {
-          best = { entry, exit, score, bypass };
-        }
-      }
-    }
-
-    if (!best) continue;
-
-    placed.push(best.entry, best.exit);
-    pairs.push({
-      id: `portal-${level}-${index}`,
-      label: String.fromCharCode(65 + index),
-      // a is the reachable/entry side; b is the forward/exit side.
-      a: best.entry,
-      b: best.exit,
-    });
+  for (let wall = 0; wall < gaps.length && pairs.length < portalPairCount; wall += 1) {
+    const gap = gaps[wall];
+    const belowY = wall === 0 ? (origin.y + gap.y) / 2 : (gaps[wall - 1].y + gap.y) / 2;
+    const aboveY = wall === gaps.length - 1 ? Math.max(topLimit + 24, gap.y - 56) : (gap.y + gaps[wall + 1].y) / 2;
+    const x = gap.x < width / 2 ? width * 0.78 : width * 0.22;
+    const a = { x, y: belowY };
+    const b = { x, y: aboveY };
+    const jump = Math.hypot(a.x - b.x, a.y - b.y);
+    if (spent + jump > budget) continue;
+    spent += jump;
+    pairs.push({ id: `portal-${level}-${pairs.length}`, label: String.fromCharCode(65 + pairs.length), a, b });
   }
-
   return pairs;
 }
 
@@ -690,8 +440,7 @@ export function resolvePortalEntry(
 
   const enteredPortal = portals.find((portal) => {
     const nearA = Math.hypot(point.x - portal.a.x, point.y - portal.a.y) < HOLE_RADIUS + STONE_RADIUS;
-    const nearB = Math.hypot(point.x - portal.b.x, point.y - portal.b.y) < HOLE_RADIUS + STONE_RADIUS;
-    return (nearA && nextLock !== `${portal.id}:a`) || (nearB && nextLock !== `${portal.id}:b`);
+    return nearA && nextLock !== `${portal.id}:a`;
   });
 
   if (!enteredPortal) {

@@ -9,7 +9,8 @@
  *  - stars + 3-star .... replay old levels; unlock stones and the Artist's secret notes
  *  - story chapters .... cliffhanger endings pull the player into the next chapter
  */
-import { type Chapter, chapterById, chapterForLevel, secretStarTarget } from './story.ts';
+import { type Drop, BONUS_INK, SURPRISE_INK, rollDrop } from './mechanics.ts';
+import { CARD_IDS, type Chapter, chapterById, chapterForLevel, secretStarTarget } from './story.ts';
 
 export const REVIVE_COST = 20;
 export const DAILY_TARGET = 3;
@@ -24,7 +25,8 @@ export type SkinRequirement =
   | { type: 'dayStreak'; target: number }
   | { type: 'stars'; target: number }
   | { type: 'perfect'; target: number }
-  | { type: 'chapter'; chapterId: string };
+  | { type: 'chapter'; chapterId: string }
+  | { type: 'drop' };
 
 export type Skin = { id: string; color: string; requirement: SkinRequirement };
 
@@ -34,6 +36,9 @@ export const SKINS: Skin[] = [
   { id: 'gold', color: '#FFD5A6', requirement: { type: 'stars', target: 15 } },
   { id: 'violet', color: '#B79BFF', requirement: { type: 'chapter', chapterId: 'thorn-garden' } },
   { id: 'ice', color: '#8FD3FF', requirement: { type: 'perfect', target: 5 } },
+  // Rare stones can only be found as a surprise drop after a level.
+  { id: 'galaxy', color: '#7C83FF', requirement: { type: 'drop' } },
+  { id: 'ember', color: '#FF6B3D', requirement: { type: 'drop' } },
 ];
 
 export type DailyState = { date: string; clears: number; claimed: boolean };
@@ -54,6 +59,16 @@ export type Progress = {
   selectedSkin: string;
   seenStory: string[];
   history: ScoreEntry[];
+  /** Levels cleared without drawing a single ink line. */
+  pure: string[];
+  /** The winning route of each cleared level, normalised to 0..1000, for the journey gallery. */
+  trails: Record<string, number[][]>;
+  /** Secret story cards found so far. */
+  cards: string[];
+  surpriseDate: string | null;
+  surprisesDone: number;
+  /** Levels cleared since the last random drop (drives the pity timer). */
+  dropMisses: number;
 };
 
 export function defaultProgress(): Progress {
@@ -73,6 +88,12 @@ export function defaultProgress(): Progress {
     selectedSkin: 'coral',
     seenStory: [],
     history: [],
+    pure: [],
+    trails: {},
+    cards: [],
+    surpriseDate: null,
+    surprisesDone: 0,
+    dropMisses: 0,
   };
 }
 
@@ -154,6 +175,8 @@ export function skinProgress(progress: Progress, skin: Skin): { current: number;
       const chapter = chapterById(req.chapterId);
       return { current: chapter && isChapterCompleted(progress, chapter) ? 1 : 0, target: 1 };
     }
+    case 'drop':
+      return { current: progress.skins.includes(skin.id) ? 1 : 0, target: 1 };
   }
 }
 
@@ -181,7 +204,7 @@ export function skinColor(skinId: string): string {
 export function nextSkinGoal(progress: Progress): { skin: Skin; current: number; target: number } | null {
   let best: { skin: Skin; current: number; target: number; ratio: number } | null = null;
   for (const skin of SKINS) {
-    if (progress.skins.includes(skin.id)) continue;
+    if (progress.skins.includes(skin.id) || skin.requirement.type === 'drop') continue;
     const { current, target } = skinProgress(progress, skin);
     const ratio = current / target;
     if (!best || ratio > best.ratio) best = { skin, current, target, ratio };
@@ -234,11 +257,13 @@ export type ClearResult = {
   newSkins: string[];
   dailyClears: number;
   dailyJustCompleted: boolean;
+  drop: Drop | null;
+  pureFirst: boolean;
 };
 
 export function applyClear(
   progress: Progress,
-  input: { level: number; failedAttempts: number; riskBonus: number; today: string },
+  input: { level: number; failedAttempts: number; riskBonus: number; today: string; pure?: boolean; trail?: number[][] },
 ): { progress: Progress; result: ClearResult } {
   const { level, failedAttempts, riskBonus, today } = input;
   const key = String(level);
@@ -254,7 +279,10 @@ export function applyClear(
   const dailyClears = Math.min(DAILY_TARGET, daily.clears + 1);
   const dailyJustCompleted = dailyClears >= DAILY_TARGET && !daily.claimed;
 
-  let inkEarned = stars * 4 + Math.floor(riskBonus / 25) + (firstClear ? 6 : 0);
+  const pureFirst = input.pure === true && !progress.pure.includes(key);
+  const drop = rollDrop(`${today}|${level}|${progress.ink}|${failedAttempts}|${progress.history.length}`, progress.skins, progress.cards, CARD_IDS, progress.dropMisses);
+  let inkEarned = stars * 4 + Math.floor(riskBonus / 25) + (firstClear ? 6 : 0) + (pureFirst ? 6 : 0);
+  if (drop?.kind === 'ink') inkEarned += drop.amount;
   if (chapterCompleted) inkEarned += CHAPTER_BONUS_INK;
   if (dailyJustCompleted) inkEarned += DAILY_BONUS_INK;
 
@@ -269,6 +297,11 @@ export function applyClear(
     daily: { date: today, clears: dailyClears, claimed: daily.claimed || dailyJustCompleted },
     dailiesCompleted: progress.dailiesCompleted + (dailyJustCompleted ? 1 : 0),
     history,
+    pure: pureFirst ? [...progress.pure, key] : progress.pure,
+    trails: input.trail && input.trail.length > 1 && (previousStars === 0 || stars >= previousStars) ? { ...progress.trails, [key]: input.trail } : progress.trails,
+    skins: drop?.kind === 'skin' ? [...progress.skins, drop.id] : progress.skins,
+    cards: drop?.kind === 'card' ? [...progress.cards, drop.id] : progress.cards,
+    dropMisses: drop ? 0 : progress.dropMisses + 1,
   };
   const granted = grantSkins(updated);
   return {
@@ -285,8 +318,23 @@ export function applyClear(
       newSkins: granted.newSkins,
       dailyClears,
       dailyJustCompleted,
+      drop,
+      pureFirst,
     },
   };
+}
+
+/* ---------- surprise page & bonus page ---------- */
+
+export function surpriseAvailable(progress: Progress, today: string): boolean {
+  return progress.bestLevel >= 3 && progress.surpriseDate !== today;
+}
+
+/** The daily surprise pays once per day; a bonus page (earned by a perfect streak) always pays. */
+export function applySurpriseClear(progress: Progress, kind: 'surprise' | 'bonus', today: string): { progress: Progress; inkEarned: number } {
+  if (kind === 'bonus') return { progress: { ...progress, ink: progress.ink + BONUS_INK }, inkEarned: BONUS_INK };
+  if (progress.surpriseDate === today) return { progress, inkEarned: 0 };
+  return { progress: { ...progress, ink: progress.ink + SURPRISE_INK, surpriseDate: today, surprisesDone: progress.surprisesDone + 1 }, inkEarned: SURPRISE_INK };
 }
 
 /* ---------- ink, level, story bookkeeping ---------- */
@@ -357,6 +405,12 @@ export function normalizeProgress(raw: unknown): Progress {
     selectedSkin: selected,
     seenStory: Array.isArray(source.seenStory) ? source.seenStory.filter((id): id is string => typeof id === 'string') : [],
     history: Array.isArray(source.history) ? (source.history as ScoreEntry[]).filter((entry) => entry && typeof entry.score === 'number').slice(0, MAX_HISTORY) : [],
+    pure: Array.isArray(source.pure) ? source.pure.filter((id): id is string => typeof id === 'string') : [],
+    trails: source.trails && typeof source.trails === 'object' ? (source.trails as Record<string, number[][]>) : {},
+    cards: Array.isArray(source.cards) ? source.cards.filter((id): id is string => typeof id === 'string') : [],
+    surpriseDate: typeof source.surpriseDate === 'string' ? source.surpriseDate : null,
+    surprisesDone: Math.max(0, Math.floor(asNumber(source.surprisesDone, 0))),
+    dropMisses: Math.max(0, Math.floor(asNumber(source.dropMisses, 0))),
   };
 }
 

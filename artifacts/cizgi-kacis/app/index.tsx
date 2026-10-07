@@ -17,7 +17,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useColors } from '@/hooks/useColors';
 import { BoardArt, LegendGlyph, StoneSprite } from '@/components/BoardArt';
 import { StoryCard } from '@/components/StoryCard';
-import { type CopyKey, type Language, L, formatCopy, language, setLanguage, skinName, t } from '@/lib/i18n';
+import { type CopyKey, L, formatCopy, pickWord, skinName, t } from '@/lib/i18n';
 import {
   DAILY_BONUS_INK,
   DAILY_TARGET,
@@ -26,6 +26,7 @@ import {
   REVIVE_COST,
   type Skin,
   applyClear,
+  applySurpriseClear,
   dailyFor,
   defaultProgress,
   hasSeenStory,
@@ -36,29 +37,58 @@ import {
   setCurrentLevel,
   skinColor,
   spendInk,
+  surpriseAvailable,
   totalStars,
   touchDay,
 } from '@/lib/progress';
 import { type Palette, STONE_BOX } from '@/lib/boardArt';
 import { loadProgress, saveProgress } from '@/lib/progressStore';
+import {
+  type DailyRule,
+  FAIL_STREAK_FOR_ASSIST,
+  INK_MAX,
+  PERFECT_STREAK_FOR_BONUS,
+  type Stain,
+  activeInkLines,
+  applyHazardForces,
+  compressTrail,
+  dailyRuleFor,
+  erasedFlags,
+  eraserConfig,
+  eraserHitsStone,
+  eraserRect,
+  flipHazards,
+  flipSegment,
+  flipX,
+  frictionFor,
+  hashString,
+  isNearMiss,
+  makeHazards,
+  makeStain,
+  pencilBars,
+  planInkLine,
+  predictPath,
+  reflectFromSegments,
+  refillInk,
+  resolveTear,
+  solidPencilSegments,
+  surpriseLevelFor,
+  type InkLine,
+} from '@/lib/mechanics';
 import { type Chapter, chapterById, chapterForLevel, levelsUntilChapterEnd } from '@/lib/story';
 import { playSound, setSoundEnabled } from '@/lib/sound';
 import {
-  HOLE_RADIUS,
   STONE_RADIUS,
   bounceFromBarriers,
   type LifeLossResult,
   clamp,
   distanceToSegment,
-  segmentHitsObstacle,
+  type LevelKind,
   getDifficultyProfile,
+  levelKind,
   makeCourse,
   makeBouncyBarriers,
   makeMovingBars,
-  makeMovingThorns,
-  renderedMovingThorns,
-  staticCourseWithoutMovingThorns,
-  positionGoal,
   makePortals,
   renderedMovingBars,
   resolveLifeLoss,
@@ -69,6 +99,8 @@ type Point = { x: number; y: number };
 type Phase = 'aiming' | 'moving' | 'hit' | 'complete' | 'demoted' | 'gameover' | 'revive';
 type Completion = ClearResult & { medal: string; riskBonus: number };
 type StoryState = { kind: 'open' | 'end'; chapter: Chapter };
+type PlayMode = { kind: 'surprise' | 'bonus'; rule: DailyRule; level: number };
+type Callout = { id: number; text: string; x: number; y: number; color: string };
 
 const SOUND_ENABLED_KEY = '@cizgi-kacis/sound-enabled';
 const LEVEL_LIVES = 3;
@@ -108,12 +140,13 @@ function failureHint(level: number, failures: number): string | null {
 
 export default function GameScreen() {
   const colors = useColors();
+  const goalColor = colors.goal;
+  const obstacleColor = colors.obstacle;
   const router = useRouter();
-  const { level: routeLevel, t: routeStamp } = useLocalSearchParams<{ level?: string; t?: string }>();
+  const { level: routeLevel, t: routeStamp, surprise: routeSurprise } = useLocalSearchParams<{ level?: string; t?: string; surprise?: string }>();
   const insets = useSafeAreaInsets();
   const [board, setBoard] = useState({ width: Dimensions.get('window').width - 32, height: 480 });
   const [level, setLevel] = useState(1);
-  const [locale, setLocale] = useState<Language>(language);
   const [runScore, setRunScore] = useState(0);
   const [soundEnabled, setSoundEnabledState] = useState(true);
   const [, setAttempts] = useState(0);
@@ -139,10 +172,38 @@ export default function GameScreen() {
   const [burstPoint, setBurstPoint] = useState<Point | null>(null);
   const [trail, setTrail] = useState<Point[]>([]);
   const [showIntro, setShowIntro] = useState(false);
+  const [mode, setMode] = useState<PlayMode | null>(null);
+  const [reveal, setReveal] = useState(1);
+  const [stains, setStains] = useState<Stain[]>([]);
+  const [brokenTears, setBrokenTears] = useState<ReadonlySet<string>>(new Set());
+  const [inkPool, setInkPool] = useState(INK_MAX);
+  const [inkPreview, setInkPreview] = useState<{ from: Point; to: Point } | null>(null);
+  const [drawnOnce, setDrawnOnce] = useState(false);
+  const [callout, setCallout] = useState<Callout | null>(null);
+  const [assist, setAssist] = useState(false);
+  const [bonusOffer, setBonusOffer] = useState(false);
+  const [surpriseResult, setSurpriseResult] = useState<{ kind: 'surprise' | 'bonus'; ink: number } | null>(null);
   const progressRef = useRef<Progress>(progress);
   const pendingLossRef = useRef<LifeLossResult | null>(null);
   const trailRef = useRef<Point[]>([]);
   const appliedRouteRef = useRef<string | null>(null);
+  const modeRef = useRef<PlayMode | null>(null);
+  const startModeRef = useRef<((kind: 'surprise' | 'bonus', returnTo?: number) => void) | null>(null);
+  const savedLevelRef = useRef(1);
+  const inkPoolRef = useRef(INK_MAX);
+  const inkLinesRef = useRef<InkLine[]>([]);
+  const inkDrawRef = useRef<{ from: Point; to: Point } | null>(null);
+  const inkUsedRef = useRef(false);
+  const brokenTearsRef = useRef<ReadonlySet<string>>(new Set());
+  const fullTrailRef = useRef<Point[]>([]);
+  const slowUntilRef = useRef(0);
+  const lastNearMissRef = useRef(0);
+  const failStreakRef = useRef(0);
+  const perfectStreakRef = useRef(0);
+  const stainCountRef = useRef(0);
+  const calloutIdRef = useRef(0);
+  const calloutAnim = useRef(new Animated.Value(0)).current;
+  const shake = useRef(new Animated.Value(0)).current;
   const stoneRef = useRef(stone);
   const velocityRef = useRef(velocity);
   const phaseRef = useRef(phase);
@@ -165,53 +226,59 @@ export default function GameScreen() {
     void saveProgress(next);
   }, []);
 
-  const course = useMemo(() => makeCourse(level, board.width, board.height), [level, board.height, board.width]);
-  const bouncyBarriers = useMemo(() => makeBouncyBarriers(level, board.width, board.height), [level, board.height, board.width]);
-  const movingBarBlueprints = useMemo(
-    () => makeMovingBars(level, board.width, board.height),
-    [level, board.height, board.width],
-  );
-  const movingThornBlueprints = useMemo(
-    () => makeMovingThorns(level, board.width, board.height),
-    [level, board.height, board.width],
-  );
-  const staticCourse = useMemo(
-    () => staticCourseWithoutMovingThorns(course, movingThornBlueprints),
-    [course, movingThornBlueprints],
-  );
+  const rule: DailyRule | null = mode?.rule ?? null;
+  const mirror = rule === 'mirror';
+  const course = useMemo(() => {
+    const base = makeCourse(level, board.width, board.height);
+    return mirror ? base.map((segment) => flipSegment(board.width, segment)) : base;
+  }, [level, board.height, board.width, mirror]);
+  const bouncyBarriers = useMemo(() => {
+    const base = makeBouncyBarriers(level, board.width, board.height);
+    return mirror ? base.map((segment) => flipSegment(board.width, segment)) : base;
+  }, [level, board.height, board.width, mirror]);
+  const movingBarBlueprints = useMemo(() => {
+    const base = makeMovingBars(level, board.width, board.height);
+    return mirror ? base.map((bar) => ({ ...bar, segment: flipSegment(board.width, bar.segment) })) : base;
+  }, [level, board.height, board.width, mirror]);
   const movingBars = useMemo(
     () => renderedMovingBars(movingBarBlueprints, motionTime),
     [movingBarBlueprints, motionTime],
   );
-  const movingThorns = useMemo(
-    () => renderedMovingThorns(movingThornBlueprints, motionTime),
-    [movingThornBlueprints, motionTime],
-  );
-  const goal = useMemo(
-    () => positionGoal(level, board.width, board.height, motionTime),
-    [level, board.height, board.width, motionTime],
-  );
-  const portals = useMemo(() => makePortals(level, board.width, board.height), [level, board.height, board.width]);
+  const portals = useMemo(() => {
+    const base = makePortals(level, board.width, board.height);
+    return mirror ? base.map((pair) => ({ ...pair, a: flipX(board.width, pair.a), b: flipX(board.width, pair.b) })) : base;
+  }, [level, board.height, board.width, mirror]);
+  const hazards = useMemo(() => {
+    const base = makeHazards(level, board.width, board.height);
+    return mirror ? flipHazards(board.width, base) : base;
+  }, [level, board.height, board.width, mirror]);
+  const eraserCfg = useMemo(() => eraserConfig(level, board.width, board.height), [level, board.height, board.width]);
+  const playKind = levelKind(level);
+  const relaxPage = playKind === 'relax' || mode !== null;
   const origin = useMemo(() => ({ x: board.width / 2, y: board.height - 57 }), [board.width, board.height]);
+  const goal = useMemo(() => ({ x: board.width / 2, y: 51 }), [board.width]);
   const [launchPoint, setLaunchPoint] = useState<Point>(origin);
   const launchPointRef = useRef(launchPoint);
 
   const chapter = chapterForLevel(level);
   const chapterTitle = L(chapter.name);
-  const switchLanguage = () => {
-    const nextLanguage = locale === 'tr' ? 'en' : 'tr';
-    setLanguage(nextLanguage);
-    setLocale(nextLanguage);
-    void AsyncStorage.setItem('@cizgi-kacis/language', nextLanguage);
-  };
 
   useEffect(() => {
     if (!loaded) return;
-    const stamp = `${routeLevel ?? ''}:${routeStamp ?? ''}`;
+    const stamp = `${routeLevel ?? ''}:${routeStamp ?? ''}:${routeSurprise ?? ''}`;
     if (appliedRouteRef.current === stamp) return;
     appliedRouteRef.current = stamp;
+    if (routeSurprise === '1') {
+      startModeRef.current?.('surprise');
+      return;
+    }
     const requestedLevel = Number(routeLevel);
     if (Number.isInteger(requestedLevel) && requestedLevel > 0 && requestedLevel <= progressRef.current.bestLevel) {
+      if (modeRef.current) {
+        setMode(null);
+        setSurpriseResult(null);
+      }
+      setBonusOffer(false);
       setLevel(requestedLevel);
       setLives(LEVEL_LIVES);
       setLevelAttempts(0);
@@ -219,26 +286,43 @@ export default function GameScreen() {
       setGhost([]);
       commit(setCurrentLevel(progressRef.current, requestedLevel));
     }
-  }, [commit, loaded, routeLevel, routeStamp]);
+  }, [commit, loaded, routeLevel, routeStamp, routeSurprise]);
 
   useEffect(() => {
     if (!loaded) return;
+    setStains([]);
+    setCallout(null);
     const current = chapterForLevel(level);
-    if (level === current.start && !hasSeenStory(progressRef.current, 'open', current.id)) {
+    if (!mode && level === current.start && !hasSeenStory(progressRef.current, 'open', current.id)) {
       setShowIntro(false);
+      setReveal(1);
       setStoryCard({ kind: 'open', chapter: current });
       return;
     }
+    // "The Artist draws the page": the pencil sketches the level before Dot wakes up.
     setShowIntro(true);
+    setReveal(0);
     introOpacity.setValue(0);
     introScale.setValue(0.94);
     Animated.parallel([
       Animated.timing(introOpacity, { toValue: 1, duration: 220, useNativeDriver: true }),
       Animated.spring(introScale, { toValue: 1, damping: 14, stiffness: 180, useNativeDriver: true }),
     ]).start();
-    const timer = setTimeout(() => setShowIntro(false), 950);
-    return () => clearTimeout(timer);
-  }, [introOpacity, introScale, level, loaded]);
+    const startedAt = Date.now();
+    let frame = 0;
+    const stepReveal = () => {
+      const p = Math.min(1, (Date.now() - startedAt) / 1300);
+      setReveal(p);
+      if (p < 1) frame = requestAnimationFrame(stepReveal);
+    };
+    frame = requestAnimationFrame(stepReveal);
+    const timer = setTimeout(() => setShowIntro(false), 1400);
+    return () => {
+      clearTimeout(timer);
+      cancelAnimationFrame(frame);
+      setReveal(1);
+    };
+  }, [introOpacity, introScale, level, loaded, mode]);
 
   useEffect(() => {
     stoneRef.current = stone;
@@ -251,6 +335,10 @@ export default function GameScreen() {
   useEffect(() => {
     phaseRef.current = phase;
   }, [phase]);
+
+  useEffect(() => {
+    modeRef.current = mode;
+  }, [mode]);
 
   useEffect(() => {
     launchPointRef.current = launchPoint;
@@ -268,19 +356,11 @@ export default function GameScreen() {
 
   useEffect(() => {
     let active = true;
-    Promise.all([
-      loadProgress(),
-      AsyncStorage.getItem(SOUND_ENABLED_KEY),
-      AsyncStorage.getItem('@cizgi-kacis/language'),
-    ]).then(([stored, storedSound, storedLanguage]) => {
+    Promise.all([loadProgress(), AsyncStorage.getItem(SOUND_ENABLED_KEY)]).then(([stored, storedSound]) => {
       if (!active) return;
       const enabled = storedSound !== 'false';
       setSoundEnabledState(enabled);
       setSoundEnabled(enabled);
-      if (storedLanguage === 'tr' || storedLanguage === 'en') {
-        setLanguage(storedLanguage);
-        setLocale(storedLanguage);
-      }
       const touched = touchDay(stored, localDate());
       commit(touched.progress);
       if (!Number.isInteger(Number(routeLevel)) || Number(routeLevel) < 1) {
@@ -314,7 +394,36 @@ export default function GameScreen() {
     riskBonusRef.current = 0;
     setRiskBonus(0);
     setAim({ x: origin.x, y: origin.y - 75 });
+    // Every attempt starts the hazard clocks and the ink pool from zero, so rhythms are learnable.
+    motionTimeRef.current = 0;
+    setMotionTime(0);
+    inkPoolRef.current = INK_MAX;
+    setInkPool(INK_MAX);
+    inkLinesRef.current = [];
+    inkUsedRef.current = false;
+    inkDrawRef.current = null;
+    setInkPreview(null);
+    brokenTearsRef.current = new Set();
+    setBrokenTears(brokenTearsRef.current);
+    fullTrailRef.current = [];
+    slowUntilRef.current = 0;
   }, [board.height, board.width, origin]);
+
+  const showCallout = useCallback((text: string, at: Point, color: string) => {
+    calloutIdRef.current += 1;
+    setCallout({ id: calloutIdRef.current, text, x: clamp(at.x, 70, board.width - 70), y: clamp(at.y - 34, 46, board.height - 70), color });
+    calloutAnim.setValue(0);
+    Animated.sequence([
+      Animated.spring(calloutAnim, { toValue: 1, damping: 9, stiffness: 260, useNativeDriver: true }),
+      Animated.delay(520),
+      Animated.timing(calloutAnim, { toValue: 2, duration: 260, useNativeDriver: true }),
+    ]).start();
+  }, [board.height, board.width, calloutAnim]);
+
+  const shakeBoard = useCallback((strength = 5) => {
+    shake.setValue(0);
+    Animated.sequence([-1, 1, -0.7, 0.5, 0].map((m) => Animated.timing(shake, { toValue: m * strength, duration: 38, useNativeDriver: true }))).start();
+  }, [shake]);
 
   const setGamePhase = useCallback((next: Phase) => {
     phaseRef.current = next;
@@ -336,11 +445,12 @@ export default function GameScreen() {
   }, [commit, resetStone, setGamePhase]);
 
   const finishAttempt = useCallback(async (success: boolean, impactPoint?: Point) => {
-    setGamePhase(success ? 'complete' : 'hit');
+    const relax = levelKind(level) === 'relax' || modeRef.current !== null;
     setFlash(true);
     if (!success) {
+      const at = impactPoint ?? stoneRef.current;
       void playSound('hit');
-      setBurstPoint(impactPoint ?? stoneRef.current);
+      setBurstPoint(at);
       burstScale.setValue(0.35);
       burstOpacity.setValue(1);
       Animated.parallel([
@@ -349,17 +459,29 @@ export default function GameScreen() {
       ]).start(({ finished }) => {
         if (finished) setBurstPoint(null);
       });
+      shakeBoard(6);
+      stainCountRef.current += 1;
+      setStains((current) => [...current.slice(-5), makeStain(at, stainCountRef.current)]);
+      showCallout(pickWord('onoHit', stainCountRef.current + level), at, obstacleColor);
+      // Hit-stop: hold the impact frame for a moment before the result appears.
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      setGamePhase('hit');
+    } else {
+      setGamePhase('complete');
     }
     await Haptics.notificationAsync(
       success ? Haptics.NotificationFeedbackType.Success : Haptics.NotificationFeedbackType.Error,
     );
     if (!success) {
+      failStreakRef.current += 1;
+      perfectStreakRef.current = 0;
+      if (failStreakRef.current >= FAIL_STREAK_FOR_ASSIST) setAssist(true);
       const lifeLoss = resolveLifeLoss(level, lives, LEVEL_LIVES);
       setAttempts((current) => current + 1);
       setLevelAttempts(levelAttempts + 1);
       setGhost(trailRef.current);
-      if (lifeLoss.outcome === 'retry') {
-        setLives(lifeLoss.lives);
+      if (relax || lifeLoss.outcome === 'retry') {
+        if (!relax) setLives(lifeLoss.lives);
         resetStone();
       } else if (progressRef.current.ink >= REVIVE_COST) {
         // Instead of punishing the player right away, offer to spend ink for one more life.
@@ -371,20 +493,41 @@ export default function GameScreen() {
       }
     } else {
       void playSound('success');
-      const { progress: nextProgress, result } = applyClear(progressRef.current, {
-        level,
-        failedAttempts: levelAttempts,
-        riskBonus: riskBonusRef.current,
-        today: localDate(),
-      });
-      const medal = result.stars === 3 ? t('medalPerfect') : result.stars === 2 ? t('medalClean') : t('medalDone');
-      setRunScore((current) => current + result.score);
-      setCompletion({ ...result, medal, riskBonus: riskBonusRef.current });
-      setGhost([]);
-      commit(nextProgress);
+      failStreakRef.current = 0;
+      setAssist(false);
+      showCallout(pickWord('onoGoal', level), goal, goalColor);
+      const playing = modeRef.current;
+      if (playing) {
+        const outcome = applySurpriseClear(progressRef.current, playing.kind, localDate());
+        commit(outcome.progress);
+        setSurpriseResult({ kind: playing.kind, ink: outcome.inkEarned });
+      } else {
+        const { progress: nextProgress, result } = applyClear(progressRef.current, {
+          level,
+          failedAttempts: relax ? Math.min(levelAttempts, 2) : levelAttempts,
+          riskBonus: riskBonusRef.current,
+          today: localDate(),
+          pure: !inkUsedRef.current,
+          trail: compressTrail(fullTrailRef.current, board.width, board.height),
+        });
+        const medal = result.stars === 3 ? t('medalPerfect') : result.stars === 2 ? t('medalClean') : t('medalDone');
+        setRunScore((current) => current + result.score);
+        setCompletion({ ...result, medal, riskBonus: riskBonusRef.current });
+        setGhost([]);
+        commit(nextProgress);
+        if (result.stars === 3) {
+          perfectStreakRef.current += 1;
+          if (perfectStreakRef.current >= PERFECT_STREAK_FOR_BONUS && !result.chapterCompleted) {
+            perfectStreakRef.current = 0;
+            setBonusOffer(true);
+          }
+        } else {
+          perfectStreakRef.current = 0;
+        }
+      }
     }
     setTimeout(() => setFlash(false), 260);
-  }, [applyLoss, burstOpacity, burstScale, commit, level, levelAttempts, lives, resetStone, setGamePhase]);
+  }, [applyLoss, board.height, board.width, burstOpacity, burstScale, commit, goal, goalColor, level, levelAttempts, lives, obstacleColor, resetStone, setGamePhase, shakeBoard, showCallout]);
 
   useEffect(() => {
     if (phase !== 'moving') {
@@ -392,25 +535,32 @@ export default function GameScreen() {
       return;
     }
 
-    const startedAt = Date.now() - motionTimeRef.current * 1000;
+    const baseFriction = frictionFor(modeRef.current?.rule ?? null, board.height);
     let previous = Date.now();
     const tick = () => {
       const now = Date.now();
-      const delta = Math.min(34, now - previous) / 16.67;
+      const slow = now < slowUntilRef.current ? 0.35 : 1; // near-miss slow motion slows the world, not just the stone
+      const rawMs = Math.min(34, now - previous);
       previous = now;
-      const elapsed = (now - startedAt) / 1000;
+      const delta = (rawMs / 16.67) * slow;
+      const elapsed = motionTimeRef.current + (rawMs / 1000) * slow;
       motionTimeRef.current = elapsed;
       setMotionTime(elapsed);
+      inkPoolRef.current = refillInk(inkPoolRef.current, (rawMs / 1000) * slow);
+      setInkPool(Math.round(inkPoolRef.current));
+
       const current = stoneRef.current;
       const rawNext = {
         x: current.x + velocityRef.current.x * delta,
         y: current.y + velocityRef.current.y * delta,
       };
-      const friction = Math.pow(0.992, delta);
-      let nextVelocity = {
-        x: velocityRef.current.x * friction,
-        y: velocityRef.current.y * friction,
-      };
+      const friction = Math.pow(baseFriction, delta);
+      let nextVelocity = applyHazardForces(
+        current,
+        { x: velocityRef.current.x * friction, y: velocityRef.current.y * friction },
+        hazards,
+        delta,
+      );
       const hitHorizontalEdge = rawNext.x < STONE_RADIUS || rawNext.x > board.width - STONE_RADIUS;
       const hitVerticalEdge = rawNext.y < STONE_RADIUS || rawNext.y > board.height - STONE_RADIUS;
       const next = {
@@ -424,35 +574,54 @@ export default function GameScreen() {
         nextVelocity = { ...nextVelocity, y: -nextVelocity.y };
       }
       velocityRef.current = nextVelocity;
+
+      // What is solid right now: the Eraser rubs bars out, the pencil sketches new ones, moving bars swing.
       const activeMovingBars = renderedMovingBars(movingBarBlueprints, elapsed);
-      const activeMovingThorns = renderedMovingThorns(movingThornBlueprints, elapsed);
-      const activeObstacles = [...staticCourse, ...bouncyBarriers, ...activeMovingBars, ...activeMovingThorns];
+      const erased = eraserCfg ? erasedFlags(eraserCfg, elapsed, course) : null;
+      const standingCourse = erased ? course.filter((_, index) => !erased[index]) : course;
+      const pencilNow = solidPencilSegments(pencilBars(level, board.width, board.height, elapsed));
+      const inkSegments = activeInkLines(inkLinesRef.current, elapsed).map((line) => line.segment);
+      const solid = [...standingCourse, ...bouncyBarriers, ...activeMovingBars, ...pencilNow];
 
-      // Continuous collision detection: test the whole movement from the
-      // previous position to the next one. Point-only checks allow the stone
-      // to tunnel through thin barriers at higher speeds.
-      const crossedObstacle = activeObstacles.find((obstacle) =>
-        segmentHitsObstacle(current, next, obstacle, STONE_RADIUS + 3),
-      );
-      if (crossedObstacle) {
-        finishAttempt(false, current);
-        return;
-      }
-
-      const bounce = bounceFromBarriers(next, nextVelocity, bouncyBarriers);
-      if (bounce.bounced) {
-        next.x = bounce.point.x;
-        next.y = bounce.point.y;
-        nextVelocity = bounce.velocity;
-        velocityRef.current = nextVelocity;
-        setVelocity(nextVelocity);
-        setStone(next);
-        setTrail((currentTrail) => [...currentTrail.slice(-17), next]);
+      const advance = (bounced: Point, velocity: Point) => {
+        // A bounce can push the stone a few pixels past the edge of the page; keep it inside.
+        const point = { x: clamp(bounced.x, STONE_RADIUS, board.width - STONE_RADIUS), y: clamp(bounced.y, STONE_RADIUS, board.height - STONE_RADIUS) };
+        stoneRef.current = point;
+        velocityRef.current = velocity;
+        setVelocity(velocity);
+        setStone(point);
+        if (fullTrailRef.current.length < 600) fullTrailRef.current.push(point);
+        setTrail((currentTrail) => [...currentTrail.slice(-17), point]);
         void playSound('portal');
         frameRef.current = requestAnimationFrame(tick);
+      };
+
+      // Springs: lines the player drew, bouncers, and slow hits on a tear-sheet bar.
+      const inkBounce = reflectFromSegments(next, nextVelocity, inkSegments);
+      if (inkBounce.bounced) {
+        advance(inkBounce.point, inkBounce.velocity);
         return;
       }
-      const nearestObstacle = activeObstacles.reduce(
+      const bounce = bounceFromBarriers(next, nextVelocity, bouncyBarriers);
+      if (bounce.bounced) {
+        advance(bounce.point, bounce.velocity);
+        return;
+      }
+      const tear = resolveTear(next, nextVelocity, hazards.tears, brokenTearsRef.current);
+      if (tear.kind === 'bounce') {
+        advance(tear.point, tear.velocity);
+        return;
+      }
+      if (tear.kind === 'tear') {
+        brokenTearsRef.current = new Set(brokenTearsRef.current).add(tear.id);
+        setBrokenTears(brokenTearsRef.current);
+        nextVelocity = tear.velocity;
+        velocityRef.current = nextVelocity;
+        showCallout('RIIIP!', next, '#E9E4D6');
+        void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      }
+
+      const nearestObstacle = solid.reduce(
         (nearest, segment) => Math.min(nearest, distanceToSegment(next, segment)),
         Number.POSITIVE_INFINITY,
       );
@@ -461,8 +630,17 @@ export default function GameScreen() {
         riskBonusRef.current = currentRiskBonus;
         setRiskBonus(currentRiskBonus);
       }
-      const portalStep = resolvePortalStep(next, portals, portalLockRef.current, activeObstacles);
-      const collided = portalStep.collided;
+      // Close call: grazing a barrier at speed slows time for a beat and cheers.
+      if (isNearMiss(nearestObstacle, Math.hypot(nextVelocity.x, nextVelocity.y)) && now - lastNearMissRef.current > 900) {
+        lastNearMissRef.current = now;
+        slowUntilRef.current = now + 380;
+        showCallout(t('nearMiss'), next, goalColor);
+        void Haptics.selectionAsync();
+      }
+
+      const portalStep = resolvePortalStep(next, portals, portalLockRef.current, solid);
+      const eraserHit = eraserCfg ? eraserHitsStone(eraserRect(eraserCfg, elapsed), next) : false;
+      const collided = portalStep.collided || eraserHit;
       const reachedGoal = Math.hypot(next.x - goal.x, next.y - goal.y) < 26;
 
       if (collided) {
@@ -484,6 +662,7 @@ export default function GameScreen() {
 
       stoneRef.current = next;
       setStone(next);
+      if (fullTrailRef.current.length < 600) fullTrailRef.current.push(next);
       setTrail((currentTrail) => [...currentTrail.slice(-17), next]);
       if (Math.hypot(nextVelocity.x, nextVelocity.y) < 0.08) {
         const restingAim = { x: next.x, y: next.y - 75 };
@@ -503,7 +682,7 @@ export default function GameScreen() {
     return () => {
       if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
     };
-  }, [board.height, board.width, bouncyBarriers, course, finishAttempt, goal, movingBarBlueprints, movingThornBlueprints, phase, portals, staticCourse]);
+  }, [board.height, board.width, bouncyBarriers, course, eraserCfg, finishAttempt, goal, goalColor, hazards, level, movingBarBlueprints, phase, portals, showCallout]);
 
   useEffect(() => {
     if (phase !== 'complete') return;
@@ -528,6 +707,10 @@ export default function GameScreen() {
     setGamePhase('moving');
     setShowHelp(false);
     setTrail([start]);
+    // Every new shot gets a fresh drop of ink for one short correction.
+    inkPoolRef.current = INK_MAX;
+    setInkPool(INK_MAX);
+    if (fullTrailRef.current.length === 0) fullTrailRef.current = [start];
     void playSound('launch');
     portalLockRef.current = null;
     joystickRef.current = { x: 0, y: 0 };
@@ -570,22 +753,51 @@ export default function GameScreen() {
     setAim(launchPointRef.current);
   }, [board.height, board.width]);
 
+  const finalizeInk = useCallback(() => {
+    const drawing = inkDrawRef.current;
+    inkDrawRef.current = null;
+    setInkPreview(null);
+    if (!drawing || phaseRef.current !== 'moving') return;
+    const plan = planInkLine(drawing.from, drawing.to, inkPoolRef.current);
+    if (!plan) return;
+    inkPoolRef.current -= plan.cost;
+    setInkPool(Math.round(inkPoolRef.current));
+    inkLinesRef.current = [...activeInkLines(inkLinesRef.current, motionTimeRef.current), { segment: plan.segment, born: motionTimeRef.current }];
+    inkUsedRef.current = true;
+    setDrawnOnce(true);
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  }, []);
+
   const responder = useMemo(() => PanResponder.create({
-    onStartShouldSetPanResponder: () => phaseRef.current === 'aiming' && !showIntro && !storyCard,
-    onMoveShouldSetPanResponder: () => phaseRef.current === 'aiming' && !showIntro && !storyCard,
+    onStartShouldSetPanResponder: () => (phaseRef.current === 'aiming' || phaseRef.current === 'moving') && !showIntro && !storyCard,
+    onMoveShouldSetPanResponder: () => (phaseRef.current === 'aiming' || phaseRef.current === 'moving') && !showIntro && !storyCard,
     onPanResponderGrant: (event) => {
+      const { locationX, locationY } = event.nativeEvent;
       if (phaseRef.current === 'aiming') {
-        startAim(event.nativeEvent.locationX, event.nativeEvent.locationY);
+        startAim(locationX, locationY);
+      } else if (phaseRef.current === 'moving') {
+        // While the stone flies, a finger drag draws a short ink line that bounces it.
+        inkDrawRef.current = { from: { x: locationX, y: locationY }, to: { x: locationX, y: locationY } };
       }
     },
     onPanResponderMove: (event) => {
+      const { locationX, locationY } = event.nativeEvent;
       if (phaseRef.current === 'aiming') {
-        updateJoystick(event.nativeEvent.locationX, event.nativeEvent.locationY);
+        updateJoystick(locationX, locationY);
+      } else if (phaseRef.current === 'moving' && inkDrawRef.current) {
+        inkDrawRef.current = { from: inkDrawRef.current.from, to: { x: locationX, y: locationY } };
+        setInkPreview(inkDrawRef.current);
       }
     },
-    onPanResponderRelease: launch,
-    onPanResponderTerminate: launch,
-  }), [launch, showIntro, startAim, storyCard, updateJoystick]);
+    onPanResponderRelease: () => {
+      if (phaseRef.current === 'aiming') void launch();
+      else finalizeInk();
+    },
+    onPanResponderTerminate: () => {
+      if (phaseRef.current === 'aiming') void launch();
+      else finalizeInk();
+    },
+  }), [finalizeInk, launch, showIntro, startAim, storyCard, updateJoystick]);
 
   const advanceLevel = useCallback(async () => {
     const next = level + 1;
@@ -593,6 +805,7 @@ export default function GameScreen() {
     setLives(LEVEL_LIVES);
     setLevelAttempts(0);
     setCompletion(null);
+    setBonusOffer(false);
     setGhost([]);
     commit(setCurrentLevel(progressRef.current, next));
     resetStone();
@@ -637,6 +850,45 @@ export default function GameScreen() {
     setGamePhase('aiming');
   }, [resetStone, setGamePhase]);
 
+  /** Daily surprise page and perfect-streak bonus page: an already-reached level under a special rule. */
+  const startMode = useCallback((kind: 'surprise' | 'bonus', returnTo?: number) => {
+    const today = localDate();
+    const stored = progressRef.current;
+    if (kind === 'surprise' && !surpriseAvailable(stored, today)) return;
+    const playRule: DailyRule = kind === 'bonus' ? 'slick' : dailyRuleFor(today);
+    const playLevel = kind === 'bonus'
+      ? Math.max(3, Math.min(stored.bestLevel, 3 + (hashString(`bonus-${stored.ink}-${stored.history.length}`) % 4)))
+      : surpriseLevelFor(today, stored.bestLevel);
+    if (!modeRef.current) savedLevelRef.current = returnTo ?? stored.currentLevel;
+    setBonusOffer(false);
+    setCompletion(null);
+    setSurpriseResult(null);
+    setMode({ kind, rule: playRule, level: playLevel });
+    setLevel(playLevel);
+    setLives(LEVEL_LIVES);
+    setLevelAttempts(0);
+    setGhost([]);
+    resetStone();
+    setGamePhase('aiming');
+  }, [resetStone, setGamePhase]);
+
+  useEffect(() => {
+    startModeRef.current = startMode;
+  }, [startMode]);
+
+  const exitMode = useCallback(() => {
+    const back = savedLevelRef.current;
+    setMode(null);
+    setSurpriseResult(null);
+    setLevel(back);
+    setLives(LEVEL_LIVES);
+    setLevelAttempts(0);
+    setGhost([]);
+    setCompletion(null);
+    resetStone();
+    setGamePhase('aiming');
+  }, [resetStone, setGamePhase]);
+
   const continueAfterDemotion = useCallback(() => {
     setGamePhase('aiming');
   }, [setGamePhase]);
@@ -648,6 +900,9 @@ export default function GameScreen() {
     setAttempts(0);
     setRunScore(0);
     setCompletion(null);
+    setMode(null);
+    setSurpriseResult(null);
+    setBonusOffer(false);
     setGhost([]);
     commit(setCurrentLevel(progressRef.current, 1));
     setShowHelp(true);
@@ -688,6 +943,29 @@ export default function GameScreen() {
     else if (pageLeft !== null && pageLeft > 1) completionNudges.push(formatCopy('pageLeft', { count: String(pageLeft) }));
   }
   const hitHint = failureHint(level, levelAttempts);
+  const eraserView = useMemo(
+    () => (eraserCfg ? { rect: eraserRect(eraserCfg, motionTime), erased: erasedFlags(eraserCfg, motionTime, course) } : null),
+    [course, eraserCfg, motionTime],
+  );
+  const pencilView = useMemo(() => pencilBars(level, board.width, board.height, motionTime), [board.height, board.width, level, motionTime]);
+  const inkLinesView = [
+    ...activeInkLines(inkLinesRef.current, motionTime).map((line) => ({ segment: line.segment, age: motionTime - line.born })),
+    ...(inkPreview ? (() => {
+      const plan = planInkLine(inkPreview.from, inkPreview.to, inkPoolRef.current);
+      return plan ? [{ segment: plan.segment, age: 1.2 }] : [];
+    })() : []),
+  ];
+  const hintPath = assist && phase === 'aiming' && Math.hypot(aim.x - launchPoint.x, aim.y - launchPoint.y) > MIN_DRAG
+    ? predictPath(launchPoint, aim, [...course, ...bouncyBarriers])
+    : [];
+  const kindKeys: Partial<Record<LevelKind, CopyKey>> = {
+    precision: 'kindPrecision', portals: 'kindPortals', relax: 'kindRelax', pencil: 'kindPencil', eraser: 'kindEraser', boss: 'kindBoss',
+  };
+  const kindKey = kindKeys[playKind];
+  const ruleKeys = { slick: 'ruleSlick', mirror: 'ruleMirror', night: 'ruleNight' } as const;
+  const levelLabel = mode
+    ? `${t(mode.kind === 'bonus' ? 'bonusBadge' : 'surpriseBadge')} · ${t(ruleKeys[mode.rule])}`
+    : kindKey ? `${chapterTitle} · ${t(kindKey)}` : chapterTitle;
   const artPalette: Palette = {
     obstacle: colors.obstacle,
     stone: stoneColor,
@@ -718,9 +996,6 @@ export default function GameScreen() {
           </Pressable>
           <Pressable onPress={toggleSound} style={styles.headerIcon} accessibilityLabel={soundEnabled ? t('soundOn') : t('soundOff')}>
             <Feather name={soundEnabled ? 'volume-2' : 'volume-x'} size={16} color={soundEnabled ? colors.stoneHighlight : colors.mutedForeground} />
-          </Pressable>
-          <Pressable onPress={switchLanguage} style={styles.localeButton} accessibilityLabel={t('languageToggle')} accessibilityRole="button">
-            <Text style={[styles.localeButtonText, { color: colors.ink }]}>{locale === 'tr' ? 'TR' : 'EN'}</Text>
           </Pressable>
           <View style={[styles.levelPill, { backgroundColor: colors.gameSurface }]}>
             <Text style={[styles.levelLabel, { color: colors.mutedForeground }]}>{t('section')}</Text>
@@ -774,15 +1049,15 @@ export default function GameScreen() {
         </View>
       </View>
       <View style={styles.chapterProgressRow}>
-        <Text style={[styles.chapterProgressLabel, { color: chapterAccent }]} numberOfLines={1}>{chapterTitle}</Text>
+        <Text style={[styles.chapterProgressLabel, { color: chapterAccent }]} numberOfLines={1}>{levelLabel}</Text>
         <View style={[styles.chapterProgressTrack, { backgroundColor: colors.gameSurfaceRaised }]}>
           <View style={[styles.chapterProgressFill, { width: `${Math.round(chapterFill * 100)}%`, backgroundColor: chapterAccent }]} />
         </View>
         <Text style={[styles.chapterProgressCount, { color: colors.mutedForeground }]}>{chapterStep}/{chapterLength ?? '∞'} · {starsCollected} {t('stars')}</Text>
       </View>
 
-      <View
-        style={[styles.board, { backgroundColor: colors.gameSurface, borderColor: chapterAccent }]}
+      <Animated.View
+        style={[styles.board, { backgroundColor: colors.gameSurface, borderColor: chapterAccent, transform: [{ translateX: shake }] }]}
         onLayout={(event) => {
           const { width, height } = event.nativeEvent.layout;
           if (width > 0 && height > 0 && (width !== board.width || height !== board.height)) {
@@ -813,22 +1088,73 @@ export default function GameScreen() {
           height={board.height}
           palette={artPalette}
           exitLabel={t('exit')}
-          course={staticCourse}
+          course={course}
           bouncy={bouncyBarriers}
           portals={portals}
           movingBlueprints={movingBarBlueprints}
           movingBars={movingBars}
-          movingThorns={movingThorns}
           goal={goal}
-          movingGoal={level >= 7}
           origin={origin}
-          chapterId={chapter.id}
-          level={level}
           stoneColor={stoneColor}
           trail={trail}
           ghost={phase === 'moving' ? [] : ghost}
           aim={phase === 'aiming' ? { from: launchPoint, to: aim } : null}
+          hazards={hazards}
+          brokenTears={brokenTears}
+          eraser={eraserView}
+          pencil={pencilView}
+          inkLines={inkLinesView}
+          stains={stains}
+          night={mode?.rule === 'night' ? stone : null}
+          hintPath={hintPath}
+          reveal={reveal}
         />
+        {callout && (
+          <Animated.View
+            key={callout.id}
+            pointerEvents="none"
+            style={[
+              styles.callout,
+              {
+                left: callout.x - 70,
+                top: callout.y,
+                opacity: calloutAnim.interpolate({ inputRange: [0, 0.35, 1, 2], outputRange: [0, 1, 1, 0] }),
+                transform: [
+                  { scale: calloutAnim.interpolate({ inputRange: [0, 1, 2], outputRange: [0.3, 1, 1.12] }) },
+                  { rotate: '-7deg' },
+                ],
+              },
+            ]}
+          >
+            <Text style={[styles.calloutText, { color: callout.color }]}>{callout.text}</Text>
+          </Animated.View>
+        )}
+        {phase === 'moving' && (
+          <View pointerEvents="none" style={styles.inkHud}>
+            <Text style={[styles.inkHudLabel, { color: colors.mutedForeground }]}>{t('inkMeter')}</Text>
+            <View style={[styles.inkTrack, { backgroundColor: colors.border }]}>
+              <View style={[styles.inkFill, { width: `${inkPool}%`, backgroundColor: stoneColor }]} />
+            </View>
+          </View>
+        )}
+        {phase === 'moving' && level <= 3 && !drawnOnce && !mode && (
+          <View pointerEvents="none" style={[styles.hintBanner, { backgroundColor: colors.gameSurfaceRaised, borderColor: colors.border }]}>
+            <Feather name="edit-3" size={13} color={colors.stoneHighlight} />
+            <Text style={[styles.hintBannerText, { color: colors.ink }]}>{t('drawHint')}</Text>
+          </View>
+        )}
+        {relaxPage && !assist && phase === 'aiming' && levelAttempts === 0 && !mode && (
+          <View pointerEvents="none" style={[styles.hintBanner, { backgroundColor: colors.gameSurfaceRaised, borderColor: colors.border }]}>
+            <Feather name="coffee" size={13} color={colors.goal} />
+            <Text style={[styles.hintBannerText, { color: colors.ink }]}>{t('relaxNote')}</Text>
+          </View>
+        )}
+        {assist && phase === 'aiming' && (
+          <View pointerEvents="none" style={[styles.hintBanner, { backgroundColor: colors.gameSurfaceRaised, borderColor: colors.border }]}>
+            <Feather name="compass" size={13} color={colors.goal} />
+            <Text style={[styles.hintBannerText, { color: colors.ink }]}>{t('assistOn')}</Text>
+          </View>
+        )}
         {welcome && (
           <View pointerEvents="none" style={[styles.welcome, { backgroundColor: colors.gameSurfaceRaised, borderColor: chapterAccent }]}>
             <Feather name="sun" size={18} color={colors.stoneHighlight} />
@@ -842,7 +1168,7 @@ export default function GameScreen() {
             </View>
           </View>
         )}
-        {showIntro && (
+        {showIntro && reveal < 0.55 && (
           <Animated.View
             pointerEvents="none"
             style={[styles.chapterIntro, { opacity: introOpacity, transform: [{ scale: introScale }] }]}
@@ -1055,7 +1381,26 @@ export default function GameScreen() {
           </View>
         )}
 
-        {phase === 'complete' && (
+        {phase === 'complete' && surpriseResult && (
+          <View style={[styles.resultCard, { backgroundColor: colors.gameSurfaceRaised }]}>
+            <View style={[styles.resultIcon, { backgroundColor: `${colors.goal}22` }]}>
+              <Feather name="gift" size={21} color={colors.goal} />
+            </View>
+            <Text style={[styles.resultTitle, { color: colors.ink }]}>
+              {surpriseResult.ink > 0 ? formatCopy('surpriseWon', { count: String(surpriseResult.ink) }) : t('surpriseDone')}
+            </Text>
+            <Pressable
+              testID="exit-mode-button"
+              onPress={exitMode}
+              style={({ pressed }) => [styles.resultButton, { backgroundColor: colors.goal, opacity: pressed ? 0.8 : 1 }]}
+            >
+              <Text style={[styles.resultButtonText, { color: colors.gameBackground }]}>{t('continueRun')}</Text>
+              <Feather name="arrow-right" size={16} color={colors.gameBackground} />
+            </Pressable>
+          </View>
+        )}
+
+        {phase === 'complete' && !surpriseResult && (
           <View style={[styles.resultCard, styles.completeCard, { backgroundColor: colors.gameSurfaceRaised }]}>
             <View style={[styles.resultIcon, { backgroundColor: `${colors.goal}22` }]}>
               <Feather name="check" size={21} color={colors.goal} />
@@ -1097,10 +1442,36 @@ export default function GameScreen() {
             {completion?.secretUnlockedFor && (
               <Text style={[styles.riskText, { color: colors.stoneHighlight }]}>{t('secretUnlocked')}</Text>
             )}
+            {completion?.drop && (
+              <Text style={[styles.riskText, { color: colors.stoneHighlight }]}>
+                {completion.drop.kind === 'ink'
+                  ? formatCopy('dropInk', { count: String(completion.drop.amount) })
+                  : completion.drop.kind === 'skin'
+                    ? formatCopy('dropSkin', { name: skinName(completion.drop.id) })
+                    : t('dropCard')}
+              </Text>
+            )}
+            {completion?.pureFirst && <Text style={[styles.riskText, { color: colors.goal }]}>{t('pureClear')}</Text>}
             {completionNudges.map((nudge) => (
               <Text key={nudge} style={[styles.nudgeText, { color: colors.mutedForeground }]}>{nudge}</Text>
             ))}
             <Text style={[styles.resultCopy, { color: colors.mutedForeground }]}>{formatCopy('nextCopy', { chapter: L(chapterForLevel(level + 1).name) })}</Text>
+            {bonusOffer && (
+              <View style={[styles.hintBox, { backgroundColor: colors.gameSurface, borderColor: colors.goal }]}>
+                <Text style={[styles.hintLabel, { color: colors.goal }]}>{t('bonusTitle')}</Text>
+                <Text style={[styles.hintText, { color: colors.ink }]}>{t('bonusCopy')}</Text>
+                <Pressable
+                  testID="bonus-button"
+                  onPress={() => startMode('bonus', level + 1)}
+                  style={({ pressed }) => [styles.bonusButton, { backgroundColor: colors.goal, opacity: pressed ? 0.8 : 1 }]}
+                >
+                  <Text style={[styles.resultButtonText, { color: colors.gameBackground }]}>{t('bonusPlay')}</Text>
+                </Pressable>
+                <Pressable onPress={() => setBonusOffer(false)} style={styles.secondaryAction}>
+                  <Text style={[styles.secondaryActionText, { color: colors.mutedForeground }]}>{t('bonusSkip')}</Text>
+                </Pressable>
+              </View>
+            )}
             <Pressable
               testID="next-level-button"
               onPress={nextLevel}
@@ -1112,7 +1483,7 @@ export default function GameScreen() {
           </View>
         )}
         {storyCard && <StoryCard kind={storyCard.kind} chapter={storyCard.chapter} colors={colors} onDismiss={dismissStory} />}
-      </View>
+      </Animated.View>
 
       <View style={styles.footer}>
         <View style={styles.legend}>
@@ -1151,8 +1522,6 @@ const styles = StyleSheet.create({
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingTop: 8, paddingBottom: 14 },
   headerActions: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   headerIcon: { width: 34, height: 34, borderRadius: 11, alignItems: 'center', justifyContent: 'center', backgroundColor: '#17253A' },
-  localeButton: { minWidth: 40, height: 34, borderRadius: 11, alignItems: 'center', justifyContent: 'center', backgroundColor: '#17253A', paddingHorizontal: 10, borderWidth: 1, borderColor: '#2A3B50' },
-  localeButtonText: { fontSize: 10, fontWeight: '800', letterSpacing: 1.2 },
   brandRow: { flexDirection: 'row', alignItems: 'center', gap: 7 },
   brandMark: { width: 8, height: 8, borderRadius: 4 },
   eyebrow: { fontSize: 10, letterSpacing: 2.1, fontWeight: '800' },
@@ -1221,7 +1590,16 @@ const styles = StyleSheet.create({
   welcomeText: { fontSize: 11, lineHeight: 16, marginTop: 2 },
   dailyChip: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 5 },
   dailyPip: { width: 14, height: 5, borderRadius: 3 },
-  completeCard: { top: '14%' },
+  completeCard: { top: '12%' },
+  callout: { position: 'absolute', width: 140, zIndex: 20, alignItems: 'center' },
+  calloutText: { fontSize: 26, fontWeight: '900', letterSpacing: 1, textShadowColor: '#0B1220', textShadowOffset: { width: 2, height: 2 }, textShadowRadius: 3 },
+  inkHud: { position: 'absolute', left: 44, bottom: 12, flexDirection: 'row', alignItems: 'center', gap: 8, zIndex: 12 },
+  inkHudLabel: { fontSize: 9, fontWeight: '800', letterSpacing: 1.4 },
+  inkTrack: { width: 92, height: 6, borderRadius: 4, overflow: 'hidden' },
+  inkFill: { height: '100%', borderRadius: 4 },
+  hintBanner: { position: 'absolute', zIndex: 14, top: 12, left: 44, right: 14, flexDirection: 'row', alignItems: 'center', gap: 8, borderRadius: 12, borderWidth: 1, paddingVertical: 8, paddingHorizontal: 11 },
+  hintBannerText: { flex: 1, fontSize: 11, lineHeight: 15, fontWeight: '600' },
+  bonusButton: { alignSelf: 'stretch', borderRadius: 11, paddingVertical: 10, alignItems: 'center', marginTop: 10 },
   rewardRow: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 6, marginTop: 10 },
   rewardChip: { flexDirection: 'row', alignItems: 'center', gap: 5, borderRadius: 10, paddingVertical: 5, paddingHorizontal: 9 },
   rewardText: { fontSize: 11, fontWeight: '800' },

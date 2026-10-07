@@ -1,6 +1,7 @@
 import { Feather } from '@expo/vector-icons';
 import React, { useEffect, useRef } from 'react';
 import { Animated, Pressable, StyleSheet, Text, View } from 'react-native';
+import { StoryScene } from '@/components/StoryScene';
 import type { useColors } from '@/hooks/useColors';
 import { L, t } from '@/lib/i18n';
 import type { Chapter } from '@/lib/story';
@@ -40,6 +41,16 @@ export function StoryCard({ kind, chapter, colors, onDismiss }: Props) {
           <Text style={[styles.kicker, { color: accent }]}>{kind === 'open' ? t('newPage') : t('pageEnd')}</Text>
         </View>
         <Text style={[styles.title, { color: colors.ink }]}>{L(chapter.name)}</Text>
+        <View style={[styles.scene, { borderColor: colors.border, backgroundColor: colors.gameSurface }]}>
+          <StoryScene
+            chapterId={chapter.id}
+            kind={kind}
+            palette={{
+              obstacle: colors.obstacle, stone: colors.stone, stoneHighlight: colors.stoneHighlight, goal: colors.goal,
+              gridLine: colors.gridLine, surface: colors.gameSurface, background: colors.gameBackground, border: colors.border,
+            }}
+          />
+        </View>
         <View style={styles.lines}>
           {localized.map((line, index) => (
             <Animated.View
@@ -80,7 +91,8 @@ const styles = StyleSheet.create({
   kickerRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   kicker: { fontSize: 10, fontWeight: '800', letterSpacing: 2 },
   title: { fontSize: 24, fontWeight: '800', marginTop: 6, textAlign: 'center' },
-  lines: { alignSelf: 'stretch', gap: 9, marginTop: 16 },
+  scene: { alignSelf: 'stretch', borderRadius: 14, borderWidth: 1, marginTop: 12, overflow: 'hidden' },
+  lines: { alignSelf: 'stretch', gap: 9, marginTop: 12 },
   balloon: { borderRadius: 14, borderWidth: 1, paddingVertical: 10, paddingHorizontal: 13 },
   line: { fontSize: 13, lineHeight: 19, fontWeight: '600' },
   button: { marginTop: 18, borderRadius: 13, paddingVertical: 12, paddingHorizontal: 18, flexDirection: 'row', alignItems: 'center', gap: 8 },

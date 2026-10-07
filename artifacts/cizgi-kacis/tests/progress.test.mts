@@ -5,6 +5,8 @@ import {
   DAILY_BONUS_INK,
   DAILY_TARGET,
   applyClear,
+  applySurpriseClear,
+  surpriseAvailable,
   dayDiff,
   defaultProgress,
   grantSkins,
@@ -68,7 +70,8 @@ test('clearing a level awards stars, ink, advances progress and counts for the d
   const { progress, result } = applyClear(start, { level: 1, failedAttempts: 0, riskBonus: 50, today: '2026-05-01' });
   assert.equal(result.stars, 3);
   assert.equal(result.firstClear, true);
-  assert.equal(result.inkEarned, 3 * 4 + 2 + 6);
+  const dropInk = result.drop?.kind === 'ink' ? result.drop.amount : 0;
+  assert.equal(result.inkEarned - dropInk, 3 * 4 + 2 + 6);
   assert.equal(progress.ink, result.inkEarned);
   assert.equal(progress.stars['1'], 3);
   assert.equal(progress.bestLevel, 2);
@@ -181,4 +184,60 @@ test('story seen flags are idempotent', () => {
   progress = markStorySeen(progress, 'open', 'first-trace');
   assert.equal(hasSeenStory(progress, 'open', 'first-trace'), true);
   assert.equal(progress.seenStory.length, 1);
+});
+
+test('a pure clear (no ink line) pays a one-time bonus and is remembered', () => {
+  const start = touchDay(defaultProgress(), '2026-05-01').progress;
+  const first = applyClear(start, { level: 1, failedAttempts: 0, riskBonus: 0, today: '2026-05-01', pure: true });
+  assert.equal(first.result.pureFirst, true);
+  assert.deepEqual(first.progress.pure, ['1']);
+  const again = applyClear(first.progress, { level: 1, failedAttempts: 0, riskBonus: 0, today: '2026-05-01', pure: true });
+  assert.equal(again.result.pureFirst, false);
+  assert.deepEqual(again.progress.pure, ['1']);
+  const notPure = applyClear(start, { level: 1, failedAttempts: 0, riskBonus: 0, today: '2026-05-01', pure: false });
+  assert.deepEqual(notPure.progress.pure, []);
+});
+
+test('the winning route is saved for the gallery and only replaced by an equal or better clear', () => {
+  const start = touchDay(defaultProgress(), '2026-05-01').progress;
+  const route = [[500, 900], [500, 500], [500, 100]];
+  const good = applyClear(start, { level: 1, failedAttempts: 0, riskBonus: 0, today: '2026-05-01', trail: route });
+  assert.deepEqual(good.progress.trails['1'], route);
+  const worse = applyClear(good.progress, { level: 1, failedAttempts: 4, riskBonus: 0, today: '2026-05-01', trail: [[1, 1], [2, 2]] });
+  assert.deepEqual(worse.progress.trails['1'], route);
+});
+
+test('drops grant what they promise and the pity timer resets', () => {
+  let progress = touchDay(defaultProgress(), '2026-05-01').progress;
+  let sawDrop = false;
+  for (let i = 0; i < 40 && !sawDrop; i += 1) {
+    const step = applyClear(progress, { level: 1 + (i % 2), failedAttempts: i % 4, riskBonus: 0, today: '2026-05-01' });
+    progress = step.progress;
+    const drop = step.result.drop;
+    if (!drop) continue;
+    sawDrop = true;
+    assert.equal(progress.dropMisses, 0);
+    if (drop.kind === 'skin') assert.ok(progress.skins.includes(drop.id));
+    if (drop.kind === 'card') assert.ok(progress.cards.includes(drop.id));
+  }
+  assert.ok(sawDrop, 'a drop must arrive within 40 clears thanks to the pity timer');
+});
+
+test('rare stones can never be earned by progress alone', () => {
+  const rich = { ...defaultProgress(), bestLevel: 99, bestDayStreak: 99, stars: Object.fromEntries(Array.from({ length: 40 }, (_, i) => [String(i + 1), 3])) };
+  const granted = grantSkins(rich).progress.skins;
+  assert.ok(!granted.includes('galaxy') && !granted.includes('ember'));
+  assert.ok(nextSkinGoal({ ...rich, skins: ['coral', 'mint', 'gold', 'violet', 'ice'] }) === null, 'drop-only stones are never suggested as a goal');
+});
+
+test('the daily surprise pays once per day, a bonus page always pays', () => {
+  const base = { ...defaultProgress(), bestLevel: 6 };
+  assert.equal(surpriseAvailable(base, '2026-05-01'), true);
+  assert.equal(surpriseAvailable({ ...base, bestLevel: 2 }, '2026-05-01'), false, 'needs level 3 first');
+  const first = applySurpriseClear(base, 'surprise', '2026-05-01');
+  assert.ok(first.inkEarned > 0);
+  assert.equal(surpriseAvailable(first.progress, '2026-05-01'), false);
+  assert.equal(applySurpriseClear(first.progress, 'surprise', '2026-05-01').inkEarned, 0);
+  assert.equal(surpriseAvailable(first.progress, '2026-05-02'), true);
+  assert.ok(applySurpriseClear(first.progress, 'bonus', '2026-05-01').inkEarned > 0);
 });

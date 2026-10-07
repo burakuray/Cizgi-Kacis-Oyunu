@@ -1,7 +1,10 @@
 import { Feather } from '@expo/vector-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
 import React, { useCallback, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
+import Svg, { Circle, Line, Polyline } from 'react-native-svg';
+import { makeCourse } from '@/game-logic';
+import { expandTrail } from '@/lib/mechanics';
 import { useColors } from '@/hooks/useColors';
 import { L, formatCopy, skinName, t } from '@/lib/i18n';
 import {
@@ -14,11 +17,12 @@ import {
   isChapterReached,
   secretUnlocked,
   selectSkin,
+  skinColor,
   skinProgress,
   totalStars,
 } from '@/lib/progress';
 import { loadProgress, saveProgress } from '@/lib/progressStore';
-import { CHAPTERS, chapterById, secretStarTarget } from '@/lib/story';
+import { CARDS, CHAPTERS, chapterById, secretStarTarget } from '@/lib/story';
 
 function requirementText(skin: Skin) {
   const requirement = skin.requirement;
@@ -29,6 +33,7 @@ function requirementText(skin: Skin) {
     const chapter = chapterById(requirement.chapterId);
     return formatCopy('reqChapter', { chapter: chapter ? L(chapter.name) : '' });
   }
+  if (requirement.type === 'drop') return t('reqDrop');
   return '';
 }
 
@@ -121,7 +126,69 @@ export default function JournalScreen() {
         })}
       </View>
 
-      <Text style={[styles.sectionTitle, { color: colors.ink }]}>{t('storyPages')}</Text>
+      <View style={styles.galleryHeader}>
+        <Text style={[styles.sectionTitle, { color: colors.ink, marginBottom: 0 }]}>{t('gallery')}</Text>
+        {Object.keys(progress.trails).length > 0 && (
+          <Pressable
+            onPress={() => void Share.share({ message: formatCopy('shareText', { stars: String(totalStars(progress)), levels: String(Object.keys(progress.stars).length) }) })}
+            style={[styles.shareButton, { borderColor: colors.border, backgroundColor: colors.gameSurface }]}
+            accessibilityLabel={t('share')}
+          >
+            <Feather name="share-2" size={14} color={colors.stoneHighlight} />
+            <Text style={[styles.shareText, { color: colors.stoneHighlight }]}>{t('share')}</Text>
+          </Pressable>
+        )}
+      </View>
+      {Object.keys(progress.trails).length === 0 ? (
+        <Text style={[styles.pageLine, { color: colors.mutedForeground, marginBottom: 26 }]}>{t('galleryEmpty')}</Text>
+      ) : (
+        <View style={styles.galleryGrid}>
+          {Object.keys(progress.trails)
+            .map(Number)
+            .sort((a, b) => a - b)
+            .map((level) => {
+              const route = expandTrail(progress.trails[String(level)], 100, 140);
+              const bars = makeCourse(level, 100, 140);
+              const stars = progress.stars[String(level)] ?? 0;
+              return (
+                <View key={level} style={[styles.thumb, { backgroundColor: colors.gameSurface, borderColor: progress.pure.includes(String(level)) ? colors.goal : colors.border }]}>
+                  <Svg width="100%" height={118} viewBox="0 0 100 140" preserveAspectRatio="xMidYMid meet">
+                    {bars.map((bar, index) => (
+                      <Line key={index} x1={bar.x1} y1={bar.y1} x2={bar.x2} y2={bar.y2} stroke={colors.obstacle} strokeWidth={1.4} strokeLinecap="round" opacity={0.35} />
+                    ))}
+                    <Polyline points={route.map((p) => `${p.x},${p.y}`).join(' ')} fill="none" stroke={skinColor(progress.selectedSkin)} strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" />
+                    <Circle cx={50} cy={11} r={3.4} fill={colors.goal} />
+                  </Svg>
+                  <View style={styles.thumbMeta}>
+                    <Text style={[styles.thumbLevel, { color: colors.ink }]}>{String(level).padStart(2, '0')}</Text>
+                    <View style={styles.thumbStars}>
+                      {progress.pure.includes(String(level)) && <Feather name="feather" size={10} color={colors.goal} />}
+                      {Array.from({ length: 3 }).map((_, i) => (
+                        <Feather key={i} name="star" size={9} color={i < stars ? colors.stoneHighlight : colors.border} />
+                      ))}
+                    </View>
+                  </View>
+                </View>
+              );
+            })}
+        </View>
+      )}
+
+      <Text style={[styles.sectionTitle, { color: colors.ink }]}>{t('cards')}</Text>
+      {CARDS.map((card) => {
+        const owned = progress.cards.includes(card.id);
+        return (
+          <View key={card.id} style={[styles.page, { backgroundColor: colors.gameSurface, borderColor: owned ? colors.stoneHighlight : colors.border, opacity: owned ? 1 : 0.55 }]}>
+            <View style={styles.pageHeader}>
+              <Feather name={owned ? 'bookmark' : 'lock'} size={14} color={owned ? colors.stoneHighlight : colors.mutedForeground} />
+              <Text style={[styles.pageTitle, { color: colors.ink }]}>{owned ? L(card.title) : '???'}</Text>
+            </View>
+            <Text style={[styles.pageLine, { color: owned ? colors.ink : colors.mutedForeground }]}>{owned ? L(card.text) : t('cardLocked')}</Text>
+          </View>
+        );
+      })}
+
+      <Text style={[styles.sectionTitle, { color: colors.ink, marginTop: 14 }]}>{t('storyPages')}</Text>
       {CHAPTERS.map((chapter) => {
         const accent = colors[chapter.accent];
         const reached = isChapterReached(progress, chapter);
@@ -186,6 +253,14 @@ const styles = StyleSheet.create({
   skinHint: { fontSize: 10, lineHeight: 14, textAlign: 'center', marginTop: 4, minHeight: 14 },
   skinTrack: { alignSelf: 'stretch', height: 4, borderRadius: 4, overflow: 'hidden', marginTop: 8 },
   skinFill: { height: '100%', borderRadius: 4 },
+  galleryHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 },
+  shareButton: { flexDirection: 'row', alignItems: 'center', gap: 6, borderRadius: 12, borderWidth: 1, paddingVertical: 7, paddingHorizontal: 11 },
+  shareText: { fontSize: 11, fontWeight: '800' },
+  galleryGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 28 },
+  thumb: { width: '30.5%', borderRadius: 14, borderWidth: 1, padding: 8 },
+  thumbMeta: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 4 },
+  thumbLevel: { fontSize: 12, fontWeight: '800' },
+  thumbStars: { flexDirection: 'row', alignItems: 'center', gap: 2 },
   page: { borderRadius: 16, borderWidth: 1, padding: 15, marginBottom: 12 },
   pageHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 9 },
   pageTitle: { fontSize: 15, fontWeight: '800' },

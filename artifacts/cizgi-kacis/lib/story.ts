@@ -256,3 +256,17 @@ export function levelsUntilChapterEnd(level: number): number | null {
   const chapter = chapterForLevel(level);
   return chapter.end === null ? null : chapter.end - level;
 }
+
+export type StoryCard = { id: string; title: Text2; text: Text2 };
+
+/** Secret comic cards. They drop at random after a level, so each one feels like a find. */
+export const CARDS: StoryCard[] = [
+  { id: 'dot-first-memory', title: { tr: 'Nokta’nın İlk Hatırası', en: 'Dot’s First Memory' }, text: { tr: 'Nokta uyandığında ilk gördüğü şey bir kalem ucuydu. Sıcaktı. Sanki ona gülümsüyordu.', en: 'The first thing Dot saw on waking was a pencil tip. It was warm. It seemed to smile.' } },
+  { id: 'eraser-lullaby', title: { tr: 'Silgi’nin Ninnisi', en: 'The Eraser’s Lullaby' }, text: { tr: 'Silgi kötü değil, sadece unutturmak için yaratıldı. Yine de her sildiğinde biraz küçülüyor.', en: 'The Eraser is not evil, only made to forget. Still, every time it erases, it shrinks a little.' } },
+  { id: 'artist-coffee', title: { tr: 'Çizer’in Kahvesi', en: 'The Artist’s Coffee' }, text: { tr: 'Sayfanın köşesindeki halka bir kahve lekesi. Çizer, en iyi fikirlerini bu lekenin yanında buldu.', en: 'The ring in the page corner is a coffee stain. The Artist found the best ideas beside it.' } },
+  { id: 'spiral-secret', title: { tr: 'Spiral Delikler', en: 'The Spiral Holes' }, text: { tr: 'Defterin cilt delikleri aslında hiç kapanmayan küçük kapılar. Her biri başka bir sayfaya çıkıyor.', en: 'The notebook’s binding holes are small doors that never close. Each leads to another page.' } },
+  { id: 'ink-rain', title: { tr: 'Mürekkep Yağmuru', en: 'Ink Rain' }, text: { tr: 'Fırtına, Çizer’in unutulmuş bir hayaliydi. Her damla bir cümle olmak istiyordu.', en: 'The storm was a forgotten dream of the Artist. Every drop wanted to become a sentence.' } },
+  { id: 'last-page', title: { tr: 'Son Sayfa Yok', en: 'There Is No Last Page' }, text: { tr: 'Çizer bir gün defterin son sayfasını aradı ve bulamadı. Meğer her sayfa yeni bir ilk sayfaymış.', en: 'One day the Artist looked for the notebook’s last page and could not find it. Every page was a first page.' } },
+];
+
+export const CARD_IDS = CARDS.map((card) => card.id);

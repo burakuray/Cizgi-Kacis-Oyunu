@@ -4,17 +4,27 @@ import React, { useCallback, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useColors } from '@/hooks/useColors';
 import { L, formatCopy, t } from '@/lib/i18n';
+import { levelKind, type LevelKind } from '@/game-logic';
+import { dailyRuleFor } from '@/lib/mechanics';
 import {
   type Progress,
   chapterStars,
   defaultProgress,
   isChapterCompleted,
   isChapterReached,
+  localDate,
   secretUnlocked,
+  surpriseAvailable,
   totalStars,
 } from '@/lib/progress';
 import { loadProgress } from '@/lib/progressStore';
 import { CHAPTERS, chapterLevels, chapterMaxStars } from '@/lib/story';
+
+const KIND_ICONS: Partial<Record<LevelKind, 'crosshair' | 'disc' | 'coffee' | 'edit-2' | 'minus-square' | 'alert-triangle'>> = {
+  precision: 'crosshair', portals: 'disc', relax: 'coffee', pencil: 'edit-2', eraser: 'minus-square', boss: 'alert-triangle',
+};
+const RULE_KEYS = { slick: 'ruleSlick', mirror: 'ruleMirror', night: 'ruleNight' } as const;
+const RULE_COPY = { slick: 'ruleSlickCopy', mirror: 'ruleMirrorCopy', night: 'ruleNightCopy' } as const;
 
 export default function MapScreen() {
   const colors = useColors();
@@ -64,6 +74,31 @@ export default function MapScreen() {
         </View>
         <Feather name="play" size={20} color={colors.gameBackground} />
       </Pressable>
+
+      {(() => {
+        const today = localDate();
+        const available = surpriseAvailable(progress, today);
+        const rule = dailyRuleFor(today);
+        return (
+          <View style={[styles.surpriseCard, { backgroundColor: colors.gameSurface, borderColor: available ? colors.stoneHighlight : colors.border }]}>
+            <View style={styles.surpriseCopy}>
+              <Text style={[styles.surpriseKicker, { color: colors.stoneHighlight }]}>{t('surpriseTitle').toUpperCase()}</Text>
+              <Text style={[styles.surpriseTitle, { color: colors.ink }]}>{t(RULE_KEYS[rule])}</Text>
+              <Text style={[styles.surpriseText, { color: colors.mutedForeground }]}>
+                {progress.bestLevel < 3 ? t('surpriseLocked') : available ? t(RULE_COPY[rule]) : t('surpriseDone')}
+              </Text>
+            </View>
+            <Pressable
+              testID="play-surprise"
+              disabled={!available}
+              onPress={() => router.replace({ pathname: '/', params: { surprise: '1', t: String(Date.now()) } })}
+              style={({ pressed }) => [styles.surpriseButton, { backgroundColor: available ? colors.stoneHighlight : colors.gameSurfaceRaised, opacity: pressed ? 0.85 : 1 }]}
+            >
+              <Feather name={available ? 'gift' : 'check'} size={18} color={available ? colors.gameBackground : colors.mutedForeground} />
+            </Pressable>
+          </View>
+        );
+      })()}
 
       {CHAPTERS.map((chapter) => {
         const accent = colors[chapter.accent];
@@ -115,6 +150,12 @@ export default function MapScreen() {
                       ))}
                     </View>
                     {!unlocked && <Feather name="lock" size={13} color={colors.mutedForeground} style={styles.lock} />}
+                    {unlocked && KIND_ICONS[levelKind(level)] && (
+                      <Feather name={KIND_ICONS[levelKind(level)]!} size={11} color={colors.mutedForeground} style={styles.kindIcon} />
+                    )}
+                    {progress.pure.includes(String(level)) && (
+                      <Feather name="feather" size={11} color={colors.goal} style={styles.pureIcon} />
+                    )}
                   </Pressable>
                 );
               })}
@@ -153,4 +194,12 @@ const styles = StyleSheet.create({
   levelNumber: { fontSize: 20, fontWeight: '800' },
   stars: { flexDirection: 'row', gap: 2, marginTop: 6 },
   lock: { position: 'absolute', right: 8, top: 8 },
+  kindIcon: { position: 'absolute', left: 8, top: 8 },
+  pureIcon: { position: 'absolute', right: 8, top: 8 },
+  surpriseCard: { flexDirection: 'row', alignItems: 'center', gap: 12, borderRadius: 16, borderWidth: 1, padding: 14, marginBottom: 26 },
+  surpriseCopy: { flex: 1 },
+  surpriseKicker: { fontSize: 9, fontWeight: '800', letterSpacing: 1.6 },
+  surpriseTitle: { fontSize: 16, fontWeight: '800', marginTop: 4 },
+  surpriseText: { fontSize: 11, lineHeight: 16, marginTop: 3 },
+  surpriseButton: { width: 44, height: 44, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
 });
