@@ -1,4 +1,3 @@
-import img_house_figure_cutout from './images/house-figure-cutout.png';
 import React from 'react';
 
 export default function DeepOrangePoster() {
@@ -36,18 +35,6 @@ export default function DeepOrangePoster() {
           <span>S</span>
           <span>E</span>
         </div>
-      </div>
-
-      {/* Subject Figure Image */}
-      <div className="absolute inset-0 z-15 flex items-end justify-center pointer-events-none">
-        <img 
-          src={img_house_figure_cutout} 
-          alt="Subject"
-          className="w-full h-[85%] object-cover object-bottom"
-          style={{ 
-            filter: 'contrast(1.15) brightness(0.95)',
-          }} 
-        />
       </div>
 
       {/* Bottom Block */}
