@@ -31,7 +31,7 @@ tüm toplamı taşır (kayıp olmaz).
    pnpm --filter @workspace/api-server run dev
    ```
    `DATABASE_URL` yoksa sunucu çökmez; sıralama uçları `503 unavailable` döner, oyun yerel rekorlarla çalışmaya devam eder.
-4. İsteğe bağlı: `NICKNAME_BLOCKLIST=kelime1,kelime2` ile yasaklı takma ad kelimeleri ekle (alt dize eşleşmesi).
+4. İsteğe bağlı: `NICKNAME_BLOCKLIST=kelime1,kelime2` ile ek yasaklı takma ad kelimeleri tanımla (alt dize eşleşmesi). Sunucuda Türkçe ve İngilizce uygunsuz kelimeler için varsayılan filtre de vardır; harf büyüklüğü, ayraçlar ve yaygın sayı benzetmeleri filtreyi aşmayı zorlaştıracak şekilde normalize edilir.
 
 ## Kurulum (oyun)
 
@@ -84,8 +84,7 @@ Sunucu oyunu çalıştırmaz, bu yüzden bir puanı **kanıtlayamaz**. Yaptığ�
 engellemek için sunucuda atışların yeniden oynatılması (replay doğrulaması) gerekir; bu, oyunun fizik motorunu sunucuya
 taşımayı gerektirir. Yarışma/ödül gibi değeri olan bir sıralama düşünüyorsan bu eksiği kapatmadan canlıya alma.
 
-Takma adlar herkese açıktır. Uygunsuz içerik için `NICKNAME_BLOCKLIST` ve bir bildirim/silme süreci (ör. veritabanından
-satır silme) düşün. Hesap silme oyuncunun kendisi tarafından yapılabilir.
+Takma adlar herkese açıktır. Uygunsuz içerik filtresi otomatik bir ilk savunmadır ve tüm yazım varyasyonlarını yakalayacağı garanti edilemez; ek kelimeler için `NICKNAME_BLOCKLIST` ve bildirim/silme süreci (ör. veritabanından satır silme) kullan. Hesap silme oyuncunun kendisi tarafından yapılabilir.
 
 ## Testler
 

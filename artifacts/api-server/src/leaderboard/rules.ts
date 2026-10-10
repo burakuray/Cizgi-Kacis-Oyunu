@@ -9,8 +9,29 @@ export const MAX_LEVELS = 500;
 export const MAX_PAGE = 100;
 
 const RESERVED = ["admin", "administrator", "moderator", "mod", "system", "sistem", "yonetici", "yönetici", "support", "destek", "claude", "anthropic"];
+const INAPPROPRIATE = ["amk", "aq", "orospu", "sik", "yarrak", "pic", "pezevenk", "fuck", "shit", "bitch", "cunt", "dick", "pussy", "asshole", "porn"];
 
 export type NicknameResult = { ok: true; nickname: string } | { ok: false; reason: "type" | "length" | "chars" | "reserved" };
+
+function normalizeNicknameForMatching(value: string): string {
+  return value
+    .normalize("NFKD")
+    .toLocaleLowerCase("en")
+    .replace(/[ıİ]/gu, "i")
+    .replace(/[ş]/gu, "s")
+    .replace(/[ğ]/gu, "g")
+    .replace(/[ç]/gu, "c")
+    .replace(/[ö]/gu, "o")
+    .replace(/[ü]/gu, "u")
+    .replace(/\p{M}/gu, "")
+    .replace(/0/gu, "o")
+    .replace(/1/gu, "i")
+    .replace(/3/gu, "e")
+    .replace(/4/gu, "a")
+    .replace(/5/gu, "s")
+    .replace(/7/gu, "t")
+    .replace(/[^a-z0-9]/gu, "");
+}
 
 /** Letters, digits, spaces and _ . - only; 3-16 characters; no impersonation of staff names. */
 export function sanitizeNickname(raw: unknown, operatorBlocklist: string[] = []): NicknameResult {
@@ -19,9 +40,12 @@ export function sanitizeNickname(raw: unknown, operatorBlocklist: string[] = [])
   const length = [...cleaned].length;
   if (length < NICKNAME_MIN || length > NICKNAME_MAX) return { ok: false, reason: "length" };
   if (!/^[\p{L}\p{N}][\p{L}\p{N} _.\-]*$/u.test(cleaned)) return { ok: false, reason: "chars" };
-  const folded = cleaned.toLocaleLowerCase("en").replace(/[ _.\-]/gu, "");
+  const folded = normalizeNicknameForMatching(cleaned);
   if (RESERVED.includes(folded)) return { ok: false, reason: "reserved" };
-  if (operatorBlocklist.some((word) => word.length >= 2 && folded.includes(word.toLocaleLowerCase("en").replace(/[ _.\-]/gu, "")))) {
+  const blockedWords = [...INAPPROPRIATE, ...operatorBlocklist]
+    .map(normalizeNicknameForMatching)
+    .filter((word) => word.length >= 2);
+  if (blockedWords.some((word) => folded.includes(word))) {
     return { ok: false, reason: "reserved" };
   }
   return { ok: true, nickname: cleaned };

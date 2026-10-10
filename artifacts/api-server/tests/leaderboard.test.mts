@@ -45,6 +45,9 @@ test("nicknames are cleaned, bounded and cannot impersonate staff", () => {
   assert.equal(sanitizeNickname("Admin").ok, false);
   assert.equal(sanitizeNickname("A.d-m_i n").ok, false, "separators do not hide a reserved name");
   assert.equal(sanitizeNickname("my BadWord x", ["badword"]).ok, false, "operator blocklist");
+  assert.equal(sanitizeNickname("f.u.c.k").ok, false, "separators do not hide inappropriate words");
+  assert.equal(sanitizeNickname("s1kici").ok, false, "common number substitutions do not bypass the filter");
+  assert.equal(sanitizeNickname("Şımarık").ok, true, "normalization does not reject unrelated Turkish words");
   assert.equal(sanitizeNickname("Badminton").ok, true, "reserved names match exactly, not as substrings");
 });
 
