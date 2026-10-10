@@ -59,6 +59,8 @@ export type Progress = {
   selectedSkin: string;
   seenStory: string[];
   history: ScoreEntry[];
+  /** Best score reached on each level; their sum is the world-leaderboard score. */
+  levelScores: Record<string, number>;
   /** Levels cleared without drawing a single ink line. */
   pure: string[];
   /** The winning route of each cleared level, normalised to 0..1000, for the journey gallery. */
@@ -88,6 +90,7 @@ export function defaultProgress(): Progress {
     selectedSkin: 'coral',
     seenStory: [],
     history: [],
+    levelScores: {},
     pure: [],
     trails: {},
     cards: [],
@@ -297,6 +300,7 @@ export function applyClear(
     daily: { date: today, clears: dailyClears, claimed: daily.claimed || dailyJustCompleted },
     dailiesCompleted: progress.dailiesCompleted + (dailyJustCompleted ? 1 : 0),
     history,
+    levelScores: { ...progress.levelScores, [key]: Math.max(progress.levelScores[key] ?? 0, score) },
     pure: pureFirst ? [...progress.pure, key] : progress.pure,
     trails: input.trail && input.trail.length > 1 && (previousStars === 0 || stars >= previousStars) ? { ...progress.trails, [key]: input.trail } : progress.trails,
     skins: drop?.kind === 'skin' ? [...progress.skins, drop.id] : progress.skins,
@@ -369,6 +373,16 @@ function asNumber(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 }
 
+function normaliseLevelScores(raw: unknown): Record<string, number> {
+  const scores: Record<string, number> = {};
+  if (raw && typeof raw === 'object') {
+    for (const [level, value] of Object.entries(raw as Record<string, unknown>)) {
+      if (typeof value === 'number' && Number.isFinite(value) && value >= 0) scores[level] = Math.floor(value);
+    }
+  }
+  return scores;
+}
+
 /** Repairs unknown JSON into a valid Progress so a corrupt or older save can never crash the game. */
 export function normalizeProgress(raw: unknown): Progress {
   const base = defaultProgress();
@@ -405,6 +419,7 @@ export function normalizeProgress(raw: unknown): Progress {
     selectedSkin: selected,
     seenStory: Array.isArray(source.seenStory) ? source.seenStory.filter((id): id is string => typeof id === 'string') : [],
     history: Array.isArray(source.history) ? (source.history as ScoreEntry[]).filter((entry) => entry && typeof entry.score === 'number').slice(0, MAX_HISTORY) : [],
+    levelScores: normaliseLevelScores(source.levelScores),
     pure: Array.isArray(source.pure) ? source.pure.filter((id): id is string => typeof id === 'string') : [],
     trails: source.trails && typeof source.trails === 'object' ? (source.trails as Record<string, number[][]>) : {},
     cards: Array.isArray(source.cards) ? source.cards.filter((id): id is string => typeof id === 'string') : [],
@@ -437,5 +452,49 @@ export function migrateLegacy(legacy: Record<string, string | null | undefined>)
     skins,
     selectedSkin: legacy.selectedSkin ?? 'coral',
     history: parseJson<ScoreEntry[]>(legacy.history, []),
+    levelScores: Object.fromEntries(
+      Object.entries(
+        parseJson<ScoreEntry[]>(legacy.history, []).reduce<Record<string, number>>((best, entry) => {
+          if (entry && typeof entry.level === 'number' && typeof entry.score === 'number') best[String(entry.level)] = Math.max(best[String(entry.level)] ?? 0, entry.score);
+          return best;
+        }, {}),
+      ),
+    ),
   });
+}
+
+/* ---------- world leaderboard ---------- */
+
+/** The largest score one level can give: level*100 + 300 (clean play) + 192 (risk bonus). The server uses the same cap. */
+export const maxLevelScore = (level: number) => level * 100 + 300 + 192;
+export const MIN_LEVEL_SCORE = 100;
+
+export type LeaderboardSnapshot = { score: number; levelsCleared: number; stars: number; bestLevel: number };
+
+/** Levels from before scores were recorded per level: rebuild what the formula would have given. */
+function estimateLevelScore(level: number, stars: number): number {
+  const failed = stars >= 3 ? 0 : stars === 2 ? 1 : 3;
+  return scoreForLevel(level, failed, 0);
+}
+
+/**
+ * What is sent to the world leaderboard: the sum of the best score of every cleared level (1..bestLevel-1).
+ * Always built from the whole progress, so a failed upload never loses points: the next one carries everything.
+ */
+export function leaderboardSnapshot(progress: Progress): LeaderboardSnapshot {
+  const cleared = Math.max(0, progress.bestLevel - 1);
+  let score = 0;
+  let stars = 0;
+  for (let level = 1; level <= cleared; level += 1) {
+    const key = String(level);
+    const levelStars = Math.min(3, Math.max(1, progress.stars[key] ?? 1));
+    const recorded = progress.levelScores[key] ?? estimateLevelScore(level, levelStars);
+    score += Math.min(maxLevelScore(level), Math.max(MIN_LEVEL_SCORE, recorded));
+    stars += levelStars;
+  }
+  return { score, levelsCleared: cleared, stars, bestLevel: progress.bestLevel };
+}
+
+export function totalScore(progress: Progress): number {
+  return leaderboardSnapshot(progress).score;
 }

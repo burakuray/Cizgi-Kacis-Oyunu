@@ -43,6 +43,7 @@ import {
 } from '@/lib/progress';
 import { type Palette, STONE_BOX } from '@/lib/boardArt';
 import { loadProgress, saveProgress } from '@/lib/progressStore';
+import { syncScore } from '@/lib/leaderboardSync';
 import {
   type DailyRule,
   FAIL_STREAK_FOR_ASSIST,
@@ -182,6 +183,8 @@ export default function GameScreen() {
   const [callout, setCallout] = useState<Callout | null>(null);
   const [assist, setAssist] = useState(false);
   const [bonusOffer, setBonusOffer] = useState(false);
+  const [worldRank, setWorldRank] = useState<{ rank: number; total: number; climbed: number } | null>(null);
+  const [rankInvite, setRankInvite] = useState(false);
   const [surpriseResult, setSurpriseResult] = useState<{ kind: 'surprise' | 'bonus'; ink: number } | null>(null);
   const progressRef = useRef<Progress>(progress);
   const pendingLossRef = useRef<LifeLossResult | null>(null);
@@ -201,6 +204,7 @@ export default function GameScreen() {
   const failStreakRef = useRef(0);
   const perfectStreakRef = useRef(0);
   const stainCountRef = useRef(0);
+  const syncTokenRef = useRef(0);
   const calloutIdRef = useRef(0);
   const calloutAnim = useRef(new Animated.Value(0)).current;
   const shake = useRef(new Animated.Value(0)).current;
@@ -363,6 +367,7 @@ export default function GameScreen() {
       setSoundEnabled(enabled);
       const touched = touchDay(stored, localDate());
       commit(touched.progress);
+      void syncScore(touched.progress); // silently uploads the total if a ranking account exists
       if (!Number.isInteger(Number(routeLevel)) || Number(routeLevel) < 1) {
         setLevel(touched.progress.currentLevel);
       }
@@ -515,6 +520,23 @@ export default function GameScreen() {
         setCompletion({ ...result, medal, riskBonus: riskBonusRef.current });
         setGhost([]);
         commit(nextProgress);
+        // Upload the new total and show the player where they stand. A late answer for an older level is ignored.
+        syncTokenRef.current += 1;
+        const token = syncTokenRef.current;
+        setWorldRank(null);
+        setRankInvite(false);
+        void syncScore(nextProgress).then((outcome) => {
+          if (token !== syncTokenRef.current) return;
+          if (outcome.status === 'ok') {
+            setWorldRank({
+              rank: outcome.result.rank,
+              total: outcome.result.total,
+              climbed: outcome.previousRank !== null ? Math.max(0, outcome.previousRank - outcome.result.rank) : 0,
+            });
+          } else if (outcome.status === 'no-account') {
+            setRankInvite(true);
+          }
+        });
         if (result.stars === 3) {
           perfectStreakRef.current += 1;
           if (perfectStreakRef.current >= PERFECT_STREAK_FOR_BONUS && !result.chapterCompleted) {
@@ -806,6 +828,9 @@ export default function GameScreen() {
     setLevelAttempts(0);
     setCompletion(null);
     setBonusOffer(false);
+    syncTokenRef.current += 1;
+    setWorldRank(null);
+    setRankInvite(false);
     setGhost([]);
     commit(setCurrentLevel(progressRef.current, next));
     resetStone();
@@ -1441,6 +1466,20 @@ export default function GameScreen() {
             )}
             {completion?.secretUnlockedFor && (
               <Text style={[styles.riskText, { color: colors.stoneHighlight }]}>{t('secretUnlocked')}</Text>
+            )}
+            {worldRank && (
+              <Pressable onPress={() => router.push('/leaderboard')} accessibilityRole="button" accessibilityLabel={t('lbSeeRanking')}>
+                <Text style={[styles.riskText, { color: colors.goal }]}>
+                  {formatCopy('lbRankChip', { rank: String(worldRank.rank) })}
+                  {worldRank.climbed > 0 ? ` · ${formatCopy('lbRankUp', { count: String(worldRank.climbed) })}` : ''}
+                </Text>
+              </Pressable>
+            )}
+            {rankInvite && !worldRank && (
+              <Pressable onPress={() => router.push('/leaderboard')} accessibilityRole="button" style={[styles.rewardChip, { backgroundColor: `${colors.stoneHighlight}22`, alignSelf: 'center', marginTop: 8 }]}>
+                <Feather name="users" size={12} color={colors.stoneHighlight} />
+                <Text style={[styles.rewardText, { color: colors.stoneHighlight }]}>{t('lbJoinTitle')}</Text>
+              </Pressable>
             )}
             {completion?.drop && (
               <Text style={[styles.riskText, { color: colors.stoneHighlight }]}>

@@ -10,6 +10,8 @@ servers:
 tags:
   - name: health
     description: Health operations
+  - name: leaderboard
+    description: "World leaderboard. Authenticated calls send the headers X-Player-Id and Authorization (Bearer secret)."
 paths:
   /healthz:
     get:
@@ -24,8 +26,215 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /players:
+    post:
+      operationId: registerPlayer
+      tags: [leaderboard]
+      summary: Join the leaderboard
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NicknameRequest"
+      responses:
+        "201":
+          description: Registered. The secret is shown only once; keep it on the device.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RegisteredPlayer"
+        "422":
+          description: Invalid nickname
+        "429":
+          description: Too many registrations
+  /players/me:
+    patch:
+      operationId: renamePlayer
+      tags: [leaderboard]
+      summary: Change the nickname
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NicknameRequest"
+      responses:
+        "200":
+          description: Renamed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NicknameRequest"
+        "401":
+          description: Unknown player or wrong secret
+        "422":
+          description: Invalid nickname
+    delete:
+      operationId: deletePlayer
+      tags: [leaderboard]
+      summary: Delete the account and its score
+      responses:
+        "204":
+          description: Deleted
+        "401":
+          description: Unknown player or wrong secret
+  /players/me/score:
+    put:
+      operationId: submitScore
+      tags: [leaderboard]
+      summary: Submit the player's total score (only improvements are kept)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ScoreSubmission"
+      responses:
+        "200":
+          description: Current standing
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScoreResult"
+        "401":
+          description: Unknown player or wrong secret
+        "422":
+          description: Score is not possible
+        "429":
+          description: Too many submissions
+  /leaderboard:
+    get:
+      operationId: getLeaderboard
+      tags: [leaderboard]
+      summary: Top players; with auth headers also the caller's rank and neighbours
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+      responses:
+        "200":
+          description: Leaderboard
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LeaderboardResponse"
+        "429":
+          description: Too many requests
 components:
   schemas:
+    NicknameRequest:
+      type: object
+      properties:
+        nickname:
+          type: string
+          minLength: 3
+          maxLength: 16
+      required:
+        - nickname
+    RegisteredPlayer:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        secret:
+          type: string
+        nickname:
+          type: string
+      required:
+        - id
+        - secret
+        - nickname
+    ScoreSubmission:
+      type: object
+      properties:
+        score:
+          type: integer
+          minimum: 0
+        levelsCleared:
+          type: integer
+          minimum: 0
+          maximum: 500
+        stars:
+          type: integer
+          minimum: 0
+        bestLevel:
+          type: integer
+          minimum: 1
+      required:
+        - score
+        - levelsCleared
+        - stars
+        - bestLevel
+    ScoreResult:
+      type: object
+      properties:
+        accepted:
+          type: boolean
+        score:
+          type: integer
+        levelsCleared:
+          type: integer
+        stars:
+          type: integer
+        rank:
+          type: integer
+        total:
+          type: integer
+      required:
+        - accepted
+        - score
+        - rank
+        - total
+    LeaderboardEntry:
+      type: object
+      properties:
+        rank:
+          type: integer
+        nickname:
+          type: string
+        score:
+          type: integer
+        levelsCleared:
+          type: integer
+        stars:
+          type: integer
+        isMe:
+          type: boolean
+      required:
+        - rank
+        - nickname
+        - score
+        - levelsCleared
+        - stars
+        - isMe
+    LeaderboardResponse:
+      type: object
+      properties:
+        entries:
+          type: array
+          items:
+            $ref: "#/components/schemas/LeaderboardEntry"
+        total:
+          type: integer
+        me:
+          oneOf:
+            - $ref: "#/components/schemas/LeaderboardEntry"
+            - type: "null"
+        around:
+          type: array
+          items:
+            $ref: "#/components/schemas/LeaderboardEntry"
+      required:
+        - entries
+        - total
+        - me
+        - around
     HealthStatus:
       type: object
       properties:
