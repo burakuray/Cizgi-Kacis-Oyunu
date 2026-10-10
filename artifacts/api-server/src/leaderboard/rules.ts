@@ -60,7 +60,7 @@ export function parseSubmission(body: unknown): SubmissionResult {
 
 /** Only progress is accepted: a total never goes down, so an old copy of the game cannot overwrite a better one. */
 export function isImprovement(current: ScoreSubmission, next: ScoreSubmission): boolean {
-  return next.score > current.score || next.levelsCleared > current.levelsCleared || (next.score === current.score && next.stars > current.stars);
+  return next.score > current.score || (next.score === current.score && (next.levelsCleared > current.levelsCleared || next.stars > current.stars));
 }
 
 export type Rankable = { id: string; score: number; scoreUpdatedAt: Date };

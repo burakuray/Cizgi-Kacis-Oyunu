@@ -74,6 +74,7 @@ test("ranking: higher score first, earlier achiever wins ties, order is stable",
   assert.deepEqual(rows.map((r) => r.id), ["c", "b", "d", "a"]);
   assert.equal(isImprovement({ score: 10, levelsCleared: 1, stars: 1, bestLevel: 2 }, { score: 10, levelsCleared: 1, stars: 1, bestLevel: 2 }), false);
   assert.equal(isImprovement({ score: 10, levelsCleared: 1, stars: 1, bestLevel: 2 }, { score: 9, levelsCleared: 1, stars: 3, bestLevel: 2 }), false, "a lower score is never an improvement");
+  assert.equal(isImprovement({ score: 800, levelsCleared: 3, stars: 6, bestLevel: 4 }, { score: 500, levelsCleared: 4, stars: 8, bestLevel: 5 }), false, "more cleared levels cannot justify a lower total");
   assert.equal(clampLimit("500"), 100);
   assert.equal(clampLimit("abc"), 50);
   assert.equal(clampLimit("0"), 1);
@@ -112,6 +113,23 @@ test("register, submit, climb the ladder, and see yourself and the others", asyn
   }
 });
 
+test("same-score progress updates preserve the first-achiever tie break", async () => {
+  const { register, submit, close } = await startServer();
+  try {
+    const first = await register("First Player");
+    const second = await register("Second Player");
+
+    assert.equal((await submit(first, 700, 2, 2)).body.rank, 1);
+    assert.equal((await submit(second, 700, 2, 2)).body.rank, 2);
+
+    const improvedStars = await submit(first, 700, 2, 3);
+    assert.equal(improvedStars.body.accepted, true);
+    assert.equal(improvedStars.body.rank, 1, "a same-score metadata update must not erase when the score was first reached");
+  } finally {
+    close();
+  }
+});
+
 test("a player outside the top list still sees their rank and the players around them", async () => {
   const { call, register, submit, close } = await startServer();
   try {
@@ -141,6 +159,10 @@ test("scores never go down and impossible scores are rejected", async () => {
     assert.equal(older.status, 200);
     assert.equal(older.body.accepted, false, "an old copy of the game cannot overwrite a better result");
     assert.equal(older.body.score, 800);
+
+    const lowerWithMoreLevels = await submit(me, 500, 4, 8);
+    assert.equal(lowerWithMoreLevels.body.accepted, false, "a lower total cannot replace the record even with more levels reported");
+    assert.equal(lowerWithMoreLevels.body.score, 800);
 
     const cheat = await submit(me, 9_999_999, 3, 9);
     assert.equal(cheat.status, 422);

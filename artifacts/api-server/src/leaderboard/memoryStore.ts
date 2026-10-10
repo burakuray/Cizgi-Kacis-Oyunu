@@ -24,7 +24,8 @@ export function createMemoryStore(now: () => Date = () => new Date()): Leaderboa
     async setScore(id, submission: ScoreSubmission) {
       const player = players.get(id);
       if (!player) throw new Error("unknown player");
-      Object.assign(player, submission, { scoreUpdatedAt: now() });
+      const scoreUpdatedAt = submission.score > player.score ? now() : player.scoreUpdatedAt;
+      Object.assign(player, submission, { scoreUpdatedAt });
       return { ...player };
     },
     async deletePlayer(id) {

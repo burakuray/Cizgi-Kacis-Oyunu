@@ -25,7 +25,10 @@ export function createDbStore(db: NodePgDatabase<Record<string, unknown>>): Lead
     async setScore(id, submission: ScoreSubmission) {
       const [row] = await db
         .update(t)
-        .set({ ...submission, scoreUpdatedAt: sql`now()` })
+        .set({
+          ...submission,
+          scoreUpdatedAt: sql`case when ${t.score} < ${submission.score} then now() else ${t.scoreUpdatedAt} end`,
+        })
         .where(eq(t.id, id))
         .returning();
       return toRecord(row);
