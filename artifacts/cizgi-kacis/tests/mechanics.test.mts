@@ -25,7 +25,7 @@ test('level kinds follow the designed rhythm and every wall has a passable gap a
       const gaps = wallLayout(level, w, h);
       assert.ok(gaps.length >= 2, `level ${level}: at least two walls`);
       gaps.forEach((gap, i) => {
-        assert.ok(gap.w >= 2 * (STONE_RADIUS + 3) + 8, `level ${level}: gap too narrow`);
+        assert.ok(gap.w >= 2 * (STONE_RADIUS + 3) + 24, `level ${level}: gap leaves less than +-12px of aim`);
         assert.ok(gap.x - gap.w / 2 >= 20 && gap.x + gap.w / 2 <= w - 20, `level ${level}: gap leaves the page`);
         if (i > 0) {
           assert.ok(gaps[i - 1].y - gap.y >= 66, `level ${level}: chamber too short`);

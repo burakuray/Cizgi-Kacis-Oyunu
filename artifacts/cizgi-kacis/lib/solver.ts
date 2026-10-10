@@ -5,7 +5,7 @@
  */
 import type { MovingBar, Point, PortalPair, Segment } from '../game-logic.ts';
 import {
-  STONE_RADIUS, bounceFromBarriers, clamp, makeBouncyBarriers, makeCourse, makeMovingBars, makePortals, renderedMovingBars, resolvePortalStep,
+  STONE_RADIUS, bounceFromBarriers, clamp, levelKind, makeBouncyBarriers, makeCourse, makeMovingBars, makePortals, renderedMovingBars, resolvePortalStep,
 } from '../game-logic.ts';
 import {
   type EraserConfig, type Hazards, applyHazardForces, frictionFor, eraserConfig, eraserHitsStone, eraserRect, erasedFlags, makeHazards, pencilBars,
@@ -111,6 +111,7 @@ export function oneShotSolutions(built: BuiltLevel, angles = 180, speeds = SHOT_
  * is found within `maxShots`. Approximate: it samples angles and speeds, so it can only over-estimate.
  */
 export function minShots(built: BuiltLevel, maxShots = 5, beam = 28, angles = 72, speeds = SHOT_SPEEDS): number {
+  const timed = built.eraser !== null || built.blueprints.length > 0 || levelKind(built.level) === 'pencil' || levelKind(built.level) === 'boss';
   let frontier: Array<{ at: Point; time: number }> = [{ at: built.origin, time: 0 }];
   const seen = new Set<string>();
   for (let depth = 1; depth <= maxShots; depth += 1) {
@@ -122,7 +123,9 @@ export function minShots(built: BuiltLevel, maxShots = 5, beam = 28, angles = 72
           const result = simulateShot(built, state.at, angle, speed, state.time);
           if (result.outcome === 'goal') return depth;
           if (result.outcome === 'rest') {
-            const key = `${Math.round(result.rest.x / 22)}:${Math.round(result.rest.y / 22)}`;
+            // On pages with time-dependent hazards the same spot at another moment is a different state.
+            const bucket = timed ? Math.floor(result.time) % 6 : 0;
+            const key = `${Math.round(result.rest.x / 22)}:${Math.round(result.rest.y / 22)}:${bucket}`;
             if (!seen.has(key)) {
               seen.add(key);
               rests.push({ at: result.rest, time: result.time });
@@ -135,7 +138,7 @@ export function minShots(built: BuiltLevel, maxShots = 5, beam = 28, angles = 72
     // does not fill up with dead ends pressed against one wall.
     const cells = new Map<string, { at: Point; time: number }>();
     for (const rest of rests) {
-      const key = `${Math.floor(rest.at.x / 60)}:${Math.floor(rest.at.y / 60)}`;
+      const key = `${Math.floor(rest.at.x / 60)}:${Math.floor(rest.at.y / 60)}:${timed ? Math.floor(rest.time) % 6 : 0}`;
       const held = cells.get(key);
       const score = (r: { at: Point }) => Math.hypot(r.at.x - built.goal.x, r.at.y - built.goal.y);
       if (!held || score(rest) < score(held)) cells.set(key, rest);

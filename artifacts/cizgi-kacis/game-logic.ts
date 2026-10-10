@@ -170,7 +170,8 @@ export function wallLayout(level: number, width: number, height: number): WallGa
   if (kind === 'portals') wanted = Math.max(wanted, 3);
   const count = clamp(wanted, 2, Math.min(4, capacity));
   const { gapShrink } = getDifficultyProfile(level);
-  const gapWidth = Math.max(46, 86 - Math.floor(level * 1.5) - gapShrink);
+  // Never narrower than 56px: the stone needs 32 to fit, so that still leaves a fair +-12px of aim.
+  const gapWidth = Math.max(56, 86 - Math.floor(level * 1.5) - gapShrink);
   const random = (index: number, salt: number) => {
     const value = Math.sin(level * 12.9898 + index * 78.233 + salt * 37.719) * 43758.5453;
     return value - Math.floor(value);
