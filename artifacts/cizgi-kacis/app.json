@@ -8,13 +8,20 @@
     "scheme": "cizgi-kacis",
     "userInterfaceStyle": "automatic",
     "ios": {
-      "supportsTablet": false
+      "supportsTablet": false,
+      "bundleIdentifier": "com.burakuray.cizgikacis",
+      "buildNumber": "1"
     },
-    "android": {},
+    "android": {
+      "package": "com.burakuray.cizgikacis",
+      "versionCode": 1
+    },
     "web": {
       "favicon": "./assets/images/icon.png"
     },
-    "plugins": ["expo-router"],
+    "plugins": [
+      "expo-router"
+    ],
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
