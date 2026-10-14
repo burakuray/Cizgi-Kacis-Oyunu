@@ -45,7 +45,7 @@ export type ShotResult = { outcome: 'goal' | 'hit' | 'rest' | 'timeout'; rest: P
 /** Speeds the player can really produce: 7.1 * clamp(drag / 94, 0.25, 1). */
 export const SHOT_SPEEDS = [1.8, 3, 4.4, 5.8, 7.1];
 
-export function simulateShot(built: BuiltLevel, from: Point, angle: number, speed: number, startTime = 0, friction?: number): ShotResult {
+export function simulateShot(built: BuiltLevel, from: Point, angle: number, speed: number, startTime = 0, friction?: number, trace?: Point[]): ShotResult {
   const { width: W, height: H, level } = built;
   const drag = friction ?? frictionFor(null, H);
   let stone = { ...from };
@@ -55,6 +55,7 @@ export function simulateShot(built: BuiltLevel, from: Point, angle: number, spee
   let t = startTime;
   for (let frame = 0; frame < 1100; frame += 1) {
     t += 1 / 60;
+    trace?.push({ ...stone });
     const raw = { x: stone.x + velocity.x, y: stone.y + velocity.y };
     let v = applyHazardForces(stone, { x: velocity.x * drag, y: velocity.y * drag }, built.hazards, 1);
     let next = { x: clamp(raw.x, STONE_RADIUS, W - STONE_RADIUS), y: clamp(raw.y, STONE_RADIUS, H - STONE_RADIUS) };

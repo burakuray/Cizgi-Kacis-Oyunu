@@ -17,7 +17,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useColors } from '@/hooks/useColors';
 import { BoardArt, LegendGlyph, StoneSprite } from '@/components/BoardArt';
 import { StoryCard } from '@/components/StoryCard';
-import { type CopyKey, L, formatCopy, pickWord, skinName, t } from '@/lib/i18n';
+import { type CopyKey, L, daysLabel, formatCopy, pickWord, skinName, t } from '@/lib/i18n';
 import {
   DAILY_BONUS_INK,
   DAILY_TARGET,
@@ -1005,12 +1005,12 @@ export default function GameScreen() {
   return (
     <View style={[styles.screen, { backgroundColor: colors.gameBackground, paddingTop: boardInsetTop }]}>
       <View style={styles.header}>
-        <View>
+        <View style={styles.headerCopy}>
           <View style={styles.brandRow}>
             <View style={[styles.brandMark, { backgroundColor: stoneColor }]} />
             <Text style={[styles.eyebrow, { color: colors.mutedForeground }]}>{t('gameName')}</Text>
           </View>
-          <Text style={[styles.title, { color: colors.ink }]}>{t('title')}</Text>
+          <Text style={[styles.title, { color: colors.ink }]} numberOfLines={2}>{t('title')}</Text>
         </View>
         <View style={styles.headerActions}>
           <Pressable onPress={() => router.push('/map')} style={styles.headerIcon} accessibilityLabel={t('map')}>
@@ -1036,7 +1036,7 @@ export default function GameScreen() {
         </View>
         <View style={styles.stat}>
           <Feather name="zap" size={14} color={colors.stoneHighlight} />
-          <Text style={[styles.statText, { color: colors.ink }]}>{progress.dayStreak} {t('dayUnit')}</Text>
+          <Text style={[styles.statText, { color: colors.ink }]}>{progress.dayStreak} {daysLabel(progress.dayStreak)}</Text>
         </View>
         <View style={styles.stat}>
           <Feather name="star" size={14} color={colors.stoneHighlight} />
@@ -1082,6 +1082,7 @@ export default function GameScreen() {
       </View>
 
       <Animated.View
+        testID="game-board"
         style={[styles.board, { backgroundColor: colors.gameSurface, borderColor: chapterAccent, transform: [{ translateX: shake }] }]}
         onLayout={(event) => {
           const { width, height } = event.nativeEvent.layout;
@@ -1564,7 +1565,8 @@ const styles = StyleSheet.create({
   brandRow: { flexDirection: 'row', alignItems: 'center', gap: 7 },
   brandMark: { width: 8, height: 8, borderRadius: 4 },
   eyebrow: { fontSize: 10, letterSpacing: 2.1, fontWeight: '800' },
-  title: { fontSize: 22, lineHeight: 28, fontWeight: '700', marginTop: 5 },
+  headerCopy: { flex: 1, minWidth: 0, paddingRight: 12 },
+  title: { fontSize: 20, lineHeight: 25, fontWeight: '700', marginTop: 5 },
   levelPill: { borderRadius: 14, minWidth: 68, paddingVertical: 8, paddingHorizontal: 12, alignItems: 'center', borderWidth: 1, borderColor: '#2A3B50' },
   levelLabel: { fontSize: 9, letterSpacing: 1.3, fontWeight: '700' },
   levelValue: { fontSize: 21, fontWeight: '800', marginTop: 1 },

@@ -389,3 +389,8 @@ export function pickWord(key: CopyKey, seed: number): string {
   const words = t(key).split('|');
   return words[Math.abs(seed) % words.length];
 }
+
+/** "1 day" / "2 days" in English; Turkish does not pluralise after a number. */
+export function daysLabel(count: number): string {
+  return language === 'en' ? (count === 1 ? 'day' : 'days') : t('dayUnit');
+}
