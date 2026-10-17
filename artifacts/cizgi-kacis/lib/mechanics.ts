@@ -58,6 +58,11 @@ export type TearBar = { id: string; segment: Segment };
 export type Hazards = { puddles: Puddle[]; magnets: Magnet[]; tears: TearBar[] };
 
 export const TEAR_SPEED = 4.4;
+/**
+ * Per-frame speed multiplier inside sticky ink. Playtested: 0.90 trapped any stone shot with less than 59% power
+ * and ate 78% of a full shot's range; 0.95 still feels sticky but a 37% shot gets out.
+ */
+export const PUDDLE_DRAG = 0.95;
 export const EMPTY_HAZARDS: Hazards = { puddles: [], magnets: [], tears: [] };
 
 export function hazardCounts(level: number): { puddles: number; magnets: number; tears: number } {
@@ -113,7 +118,7 @@ export function applyHazardForces(point: Point, velocity: Point, hazards: Hazard
   let vy = velocity.y;
   for (const puddle of hazards.puddles) {
     if (Math.hypot(point.x - puddle.x, point.y - puddle.y) < puddle.r) {
-      const drag = Math.pow(0.9, delta);
+      const drag = Math.pow(PUDDLE_DRAG, delta);
       vx *= drag;
       vy *= drag;
     }

@@ -51,7 +51,11 @@ async function shoot(shot, index) {
   const ax = ox + W / 2, ay = oy + H * 0.55;
   await page.touchscreen.touchStart(ax, ay);
   await sleep(60);
-  await page.touchscreen.touchMove(ax + Math.cos(shot.angle) * radius * 0.5, ay + Math.sin(shot.angle) * radius * 0.5);
+  // Chromium swallows touch moves inside its ~15px touch-slop zone (a real phone does not), so first pull out
+  // past the slop, then come back to the radius we actually want. Only the final position counts for the game.
+  const pull = Math.max(radius, 24);
+  await page.touchscreen.touchMove(ax + Math.cos(shot.angle) * pull, ay + Math.sin(shot.angle) * pull);
+  await sleep(40);
   await page.touchscreen.touchMove(ax + Math.cos(shot.angle) * radius, ay + Math.sin(shot.angle) * radius);
   await sleep(120);
   if (index === 0) await page.screenshot({ path: `${out}/03-aiming.png` });

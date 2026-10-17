@@ -55,7 +55,7 @@ test('hazards appear on schedule, are deterministic and keep clear of barriers',
 test('sticky ink slows the stone and magnets pull or push it', () => {
   const v = { x: 5, y: 0 };
   const inPuddle = applyHazardForces({ x: 100, y: 100 }, v, { ...EMPTY_HAZARDS, puddles: [{ x: 100, y: 100, r: 30 }] }, 1);
-  assert.ok(inPuddle.x < 5 * 0.95);
+  assert.ok(inPuddle.x < 5 * 0.97 && inPuddle.x > 5 * 0.9, 'sticky, but not a trap');
   const outside = applyHazardForces({ x: 300, y: 300 }, v, { ...EMPTY_HAZARDS, puddles: [{ x: 100, y: 100, r: 30 }] }, 1);
   assert.deepEqual(outside, v);
   const attract = applyHazardForces({ x: 100, y: 100 }, { x: 0, y: 0 }, { ...EMPTY_HAZARDS, magnets: [{ x: 160, y: 100, r: 104, strength: 0.11, polarity: 1 }] }, 1);
@@ -187,4 +187,24 @@ test('mirroring flips x only and is its own inverse', () => {
   const hz = { puddles: [{ x: 50, y: 9, r: 30 }], magnets: [], tears: [] };
   assert.equal(flipHazards(360, hz).puddles[0].x, 310);
   assert.equal(flipHazards(360, hz).puddles[0].y, 9);
+});
+
+test('a stone resting in sticky ink can leave it with a moderate shot (no soft trap)', () => {
+  const puddle = { x: 0, y: 0, r: 30 };
+  const hazards = { ...EMPTY_HAZARDS, puddles: [puddle] };
+  const friction = frictionFor(null, 628);
+  const leaves = (speed: number) => {
+    let x = 0;
+    let v = speed;
+    for (let i = 0; i < 800 && v >= 0.08; i += 1) {
+      const next = x + v;
+      v = applyHazardForces({ x, y: 0 }, { x: v * friction, y: 0 }, hazards, 1).x;
+      x = next;
+      if (Math.abs(x) >= puddle.r) return true;
+    }
+    return false;
+  };
+  assert.equal(leaves(1.8), false, 'a feather-light shot stays put');
+  assert.equal(leaves(3.0), true, 'a 42% shot gets out');
+  assert.equal(leaves(7.1), true);
 });
